@@ -1,0 +1,30 @@
+# ── Core ──────────────────────────────────────────
+requests==2.31.0
+beautifulsoup4==4.12.3
+python-dotenv==1.0.1
+colorama==0.4.6
+
+# ── Backend ───────────────────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+pydantic==2.7.1
+slowapi==0.1.9          # rate limiting for FastAPI (pip install slowapi)
+
+# ── Database ──────────────────────────────────────
+# sqlite3 is part of Python stdlib — no install needed
+
+# ── AI Layer (primary) ────────────────────────────
+google-generativeai==0.5.4
+
+# ── AI Layer (optional providers) ─────────────────
+openai>=1.30.0          # OpenAI GPT-4o, and all OpenAI-compatible endpoints
+anthropic>=0.28.0       # Anthropic Claude
+# ollama is API-based (no pip package needed, just run the ollama server)
+
+# ── Frontend ──────────────────────────────────────
+streamlit==1.35.0
+
+# ── Dev / Testing ─────────────────────────────────
+pytest==8.2.0
+ruff>=0.4.0             # linting
+bandit>=1.7.9           # SAST on this codebase itself

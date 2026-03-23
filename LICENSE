@@ -1,0 +1,37 @@
+"""
+Apache License 2.0
+
+Copyright 2026 Web Sentinels Project Contributors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+---
+
+IMPORTANT LEGAL NOTICE
+
+This software is designed exclusively for authorized security testing and
+educational purposes. Using this tool to scan systems, networks, or applications
+without explicit written permission from the owner is unauthorized and likely
+illegal under laws including but not limited to:
+
+  - Computer Fraud and Abuse Act (CFAA) — United States
+  - Computer Misuse Act 1990 — United Kingdom
+  - Cybercrime Prevention Act — Philippines
+  - Similar legislation in your jurisdiction
+
+By using this software you agree that:
+  1. You have obtained explicit written permission to test the target system.
+  2. You take full responsibility for complying with all applicable laws.
+  3. The authors and contributors accept no liability for unauthorized use.
+
+Get written authorization before you scan anything.

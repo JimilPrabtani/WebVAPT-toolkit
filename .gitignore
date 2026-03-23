@@ -1,0 +1,52 @@
+# ── Python ────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Virtual environments ──────────────────────────────────────────────────
+venv/
+env/
+.venv/
+ENV/
+env.bak/
+
+# ── Secrets — NEVER commit real credentials ───────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Database & generated output ───────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+data/reports/
+data/*.sql
+
+# ── Test/coverage artifacts ───────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# ── IDE ───────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# ── OS ────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Logs ──────────────────────────────────────────────────────────────────
+*.log
+logs/
