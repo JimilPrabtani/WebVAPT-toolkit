@@ -1,4 +1,4 @@
-﻿import os
+import os
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -9,12 +9,18 @@ load_dotenv()
 
 from api.routes import router
 from api.database import init_db
+from config import validate_config
 
 # Read once at startup — never re-read mid-request.
 _API_KEY: str = os.getenv("API_KEY", "")
 
-# Paths that are always public (Swagger UI / health check)
-_OPEN_PATHS = {"/", "/docs", "/redoc", "/openapi.json"}
+# Paths that are always public (health check / root)
+_OPEN_PATHS = {"/"}
+
+# Expose Swagger UI only when EXPOSE_DOCS=true (default: false for security)
+_EXPOSE_DOCS = os.getenv("EXPOSE_DOCS", "false").lower() == "true"
+if _EXPOSE_DOCS:
+    _OPEN_PATHS |= {"/docs", "/redoc", "/openapi.json"}
 
 # ── Rate limiting ─────────────────────────────────────────────────────────
 # Uses slowapi (pip install slowapi) — a thin Starlette wrapper around limits.
@@ -34,6 +40,7 @@ except ImportError:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    validate_config()
     if _API_KEY:
         print("[*] API key authentication ENABLED (X-API-Key header required).")
     else:
@@ -74,8 +81,9 @@ async def api_key_middleware(request: Request, call_next):
 app.add_middleware(
     CORSMiddleware,
     allow_origins  = ["http://localhost:8501", "http://127.0.0.1:8501"],
-    allow_methods  = ["*"],
-    allow_headers  = ["*"],
+    # Explicit lists follow least-privilege — update if new endpoint methods are added.
+    allow_methods  = ["GET", "POST", "DELETE"],
+    allow_headers  = ["Content-Type", "X-API-Key"],
 )
 
 app.include_router(router, prefix="/api/v1", tags=["Scanning"])

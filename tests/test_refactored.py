@@ -120,8 +120,9 @@ class TestFetcherCaching:
         
         _cache_clear()  # Start fresh
         
-        # Mock requests.get
-        with patch('scanner.fetcher.requests.get') as mock_get:
+        # Mock requests.get and SSRF check (DNS not available in test env)
+        with patch('scanner.fetcher.requests.get') as mock_get, \
+             patch('scanner.fetcher._is_resolved_ip_safe', return_value=True):
             mock_response = Mock(spec=requests.Response)
             mock_response.text = "<html>test</html>"
             mock_response.headers = {"Content-Type": "text/html"}
@@ -144,7 +145,8 @@ class TestFetcherCaching:
         """Test that _cache_clear() resets the cache for new scans."""
         from scanner.fetcher import fetch, _cache_clear
         
-        with patch('scanner.fetcher.requests.get') as mock_get:
+        with patch('scanner.fetcher.requests.get') as mock_get, \
+             patch('scanner.fetcher._is_resolved_ip_safe', return_value=True):
             mock_response = Mock(spec=requests.Response)
             mock_response.text = "<html>test</html>"
             mock_response.headers = {"Content-Type": "text/html"}
@@ -167,7 +169,8 @@ class TestFetcherCaching:
         
         _cache_clear()
         
-        with patch('scanner.fetcher.requests.get') as mock_get:
+        with patch('scanner.fetcher.requests.get') as mock_get, \
+             patch('scanner.fetcher._is_resolved_ip_safe', return_value=True):
             mock_response = Mock(spec=requests.Response)
             mock_response.text = "<html>test</html>"
             mock_response.headers = {"Content-Type": "text/html"}
