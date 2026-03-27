@@ -1,10 +1,12 @@
-﻿import requests
+import requests
 import urllib3
+import ipaddress
+import socket
 from collections import deque
 from typing import List, Tuple,Optional, Dict
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
-from config import DEFAULT_HEADERS, SCAN_TIMEOUT, MAX_PAGES_TO_CRAWL, ALLOW_INSECURE_TLS
+from config import DEFAULT_HEADERS, SCAN_TIMEOUT, MAX_PAGES_TO_CRAWL, ALLOW_INSECURE_TLS, ALLOW_PRIVATE_TARGETS
 
 # Suppress TLS warnings only when the user has explicitly opted into insecure mode.
 if ALLOW_INSECURE_TLS:
@@ -20,6 +22,31 @@ def _cache_clear() -> None:
     """Clear the response cache. Called at the start of each scan."""
     global _response_cache
     _response_cache.clear()
+
+
+def _is_resolved_ip_safe(hostname: str) -> bool:
+    """
+    Re-validate the resolved IP(s) of a hostname at request time.
+    Guards against DNS rebinding: the SSRF check in config.is_ssrf_safe()
+    resolves the hostname once at scan-start validation time; an attacker
+    can return a public IP then, and a private IP when the actual request
+    fires. This per-request check catches that second resolution.
+    """
+    try:
+        results = socket.getaddrinfo(hostname, None)
+        for result in results:
+            addr = ipaddress.ip_address(result[4][0])
+            if (
+                addr.is_private
+                or addr.is_loopback
+                or addr.is_link_local
+                or addr.is_reserved
+                or addr.is_multicast
+            ):
+                return False
+        return True
+    except Exception:
+        return False
 
 
 def fetch(url: str, allow_redirects: bool = True, _use_cache: bool = True) -> Optional[requests.Response]:
@@ -41,7 +68,17 @@ def fetch(url: str, allow_redirects: bool = True, _use_cache: bool = True) -> Op
     """
     if _use_cache and url in _response_cache:
         return _response_cache[url]
-    
+
+    # Per-request SSRF guard: re-validate resolved IP when private targets are
+    # disallowed. This catches DNS rebinding attacks where a public IP is
+    # returned at scan-start validation time but a private IP is returned here.
+    if not ALLOW_PRIVATE_TARGETS:
+        hostname = urlparse(url).hostname
+        if hostname and not _is_resolved_ip_safe(hostname):
+            if _use_cache:
+                _response_cache[url] = None
+            return None
+
     try:
         response = requests.get(
             url,

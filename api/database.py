@@ -18,12 +18,16 @@ across all scans" without loading entire scan objects.
 
 import sqlite3
 import json
+import os
 import uuid
 from datetime import datetime
 from pathlib import Path
 
 # ── Database file location ────────────────────────────────────────────────
-DB_PATH = Path(__file__).parent.parent / "data" / "scans.db"
+# Configurable via DB_PATH env var — useful for containerised deployments
+# where the database should live on a mounted volume outside the project root.
+_default_db = str(Path(__file__).parent.parent / "data" / "scans.db")
+DB_PATH = Path(os.getenv("DB_PATH", _default_db))
 
 
 def get_connection() -> sqlite3.Connection:
