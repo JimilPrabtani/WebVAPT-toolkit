@@ -1,10 +1,32 @@
 """
 scanner/xss_checks.py
 ─────────────────────
-Detects Cross-Site Scripting (XSS) vulnerabilities:
-  1. Reflected XSS — inject a payload into URL params and check if it echoes in response
-  2. Stored XSS indicators — scan page source for dangerous sink patterns
-  3. DOM-based XSS patterns — look for unsafe JS patterns in inline scripts
+Detects Cross-Site Scripting (XSS) vulnerabilities.
+
+WHAT IS XSS?
+  Cross-Site Scripting happens when a web application takes user-supplied input
+  and includes it in the HTML output without proper encoding. An attacker can
+  inject JavaScript that runs in other users' browsers, enabling:
+    - Session cookie theft → account takeover
+    - Keylogging / credential harvesting
+    - Redirecting users to phishing pages
+    - Defacing the website
+
+THREE DETECTION METHODS:
+  1. Reflected XSS — inject into URL params, check if the raw probe appears in the response
+  2. DOM XSS      — scan inline <script> blocks for dangerous JavaScript patterns
+                    (document.write, innerHTML, eval with user-controlled sources)
+  3. Form surface — flag forms with text inputs as potential XSS injection points (INFO)
+
+REFERENCES:
+  - OWASP A03:2021 — Injection (https://owasp.org/Top10/A03_2021-Injection/)
+  - CWE-79 — Improper Neutralization of Input During Web Page Generation
+  - MITRE T1059.007 — JavaScript
+
+HOW TO ADD NEW XSS PROBES:
+  Add a string to XSS_PROBES. Use simple, detectable payloads — the goal is
+  to check if the input is reflected unescaped, not to bypass WAFs.
+  Example: '<img src=x onerror="alert(XSS_TEST)">'
 """
 from typing import List
 import re

@@ -1,6 +1,23 @@
 """
 app.py — WebPenTest AI Toolkit Dashboard
-Fixed: lag, history view results, remediation rendering, XSS escaping, polling timeout
+
+HOW THIS FILE IS ORGANIZED:
+  1. Imports and config
+  2. CSS styling
+  3. Severity config (colors/icons)
+  4. VULN_EDUCATION — maps finding types to OWASP/CWE/MITRE badge links
+  5. VULN_CATEGORY_MAP — groups findings by category for the filter panel
+  6. Cached API call helpers
+  7. Rendering functions (finding card, risk gauge, exec summary, etc.)
+  8. Sidebar
+  9. Polling (waits for async scan to finish)
+  10. main() — the Streamlit app entry point
+
+HOW TO CUSTOMIZE:
+  - Change colors: edit the SEV dict
+  - Add new vuln type badges: add to VULN_EDUCATION
+  - Add a new category filter group: add to VULN_CATEGORY_MAP
+  - Change the API base URL: edit API_BASE
 """
 
 import os
@@ -200,9 +217,21 @@ SEV = {
     "INFO":     {"color": "#4a90d9", "bg": "rgba(74,144,217,0.12)",  "icon": "🔵"},
 }
 
-# ── CWE / OWASP / MITRE ATT&CK education lookup ──────────────────────────
-# Maps vuln_type prefix → reference identifiers shown as badges in the UI.
+# ── CWE / OWASP / MITRE ATT&CK / SANS education lookup ───────────────────
+#
+# Maps vuln_type prefix → reference identifiers shown as clickable badges.
+#
+# HOW TO ADD A NEW MAPPING:
+#   1. Add the vuln_type prefix (or full name) as the dict key
+#   2. Fill in cwe, owasp, mitre, mitre_name, and the matching *_url fields
+#   3. The _get_education() function uses prefix matching, so partial names work
+#
+# STANDARDS COVERED:
+#   OWASP Top 10 2021 — https://owasp.org/Top10/
+#   CWE (Common Weakness Enumeration) — https://cwe.mitre.org/
+#   MITRE ATT&CK — https://attack.mitre.org/
 VULN_EDUCATION: dict[str, dict] = {
+    # ── Injection ─────────────────────────────────────────────────────────
     "SQL Injection (Error-Based)": {
         "cwe": "CWE-89", "owasp": "A03:2021",
         "mitre": "T1190", "mitre_name": "Exploit Public-Facing Application",
@@ -217,6 +246,14 @@ VULN_EDUCATION: dict[str, dict] = {
         "owasp_url": "https://owasp.org/Top10/A03_2021-Injection/",
         "mitre_url": "https://attack.mitre.org/techniques/T1190/",
     },
+    "Server-Side Template Injection (SSTI)": {
+        "cwe": "CWE-94", "owasp": "A03:2021", "mitre": "T1190",
+        "mitre_name": "Exploit Public-Facing Application",
+        "cwe_url":   "https://cwe.mitre.org/data/definitions/94.html",
+        "owasp_url": "https://owasp.org/Top10/A03_2021-Injection/",
+        "mitre_url": "https://attack.mitre.org/techniques/T1190/",
+    },
+    # ── XSS ───────────────────────────────────────────────────────────────
     "Cross-Site Scripting (Reflected XSS)": {
         "cwe": "CWE-79", "owasp": "A03:2021", "mitre": "T1059.007",
         "mitre_name": "JavaScript",
@@ -231,13 +268,14 @@ VULN_EDUCATION: dict[str, dict] = {
         "owasp_url": "https://owasp.org/Top10/A03_2021-Injection/",
         "mitre_url": "https://attack.mitre.org/techniques/T1059/007/",
     },
-    "Server-Side Template Injection (SSTI)": {
-        "cwe": "CWE-94", "owasp": "A03:2021", "mitre": "T1190",
-        "mitre_name": "Exploit Public-Facing Application",
-        "cwe_url":   "https://cwe.mitre.org/data/definitions/94.html",
+    "XSS Attack Surface": {
+        "cwe": "CWE-79", "owasp": "A03:2021", "mitre": "T1059.007",
+        "mitre_name": "JavaScript",
+        "cwe_url":   "https://cwe.mitre.org/data/definitions/79.html",
         "owasp_url": "https://owasp.org/Top10/A03_2021-Injection/",
-        "mitre_url": "https://attack.mitre.org/techniques/T1190/",
+        "mitre_url": "https://attack.mitre.org/techniques/T1059/007/",
     },
+    # ── Auth / Access Control ─────────────────────────────────────────────
     "Open Redirect": {
         "cwe": "CWE-601", "owasp": "A01:2021", "mitre": "T1566",
         "mitre_name": "Phishing",
@@ -245,14 +283,62 @@ VULN_EDUCATION: dict[str, dict] = {
         "owasp_url": "https://owasp.org/Top10/A01_2021-Broken_Access_Control/",
         "mitre_url": "https://attack.mitre.org/techniques/T1566/",
     },
-    "CORS Misconfiguration: Wildcard Origin": {
+    "JWT Algorithm:None Bypass": {
+        "cwe": "CWE-347", "owasp": "A07:2021", "mitre": "T1552",
+        "mitre_name": "Unsecured Credentials",
+        "cwe_url":   "https://cwe.mitre.org/data/definitions/347.html",
+        "owasp_url": "https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/",
+        "mitre_url": "https://attack.mitre.org/techniques/T1552/",
+    },
+    # ── Security Headers ──────────────────────────────────────────────────
+    "Missing Header: Content-Security-Policy": {
+        "cwe": "CWE-693", "owasp": "A05:2021", "mitre": "T1059.007",
+        "mitre_name": "JavaScript",
+        "cwe_url":   "https://cwe.mitre.org/data/definitions/693.html",
+        "owasp_url": "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/",
+        "mitre_url": "https://attack.mitre.org/techniques/T1059/007/",
+    },
+    "Missing Header: Strict-Transport-Security": {
+        "cwe": "CWE-319", "owasp": "A02:2021", "mitre": "T1557",
+        "mitre_name": "Adversary-in-the-Middle",
+        "cwe_url":   "https://cwe.mitre.org/data/definitions/319.html",
+        "owasp_url": "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/",
+        "mitre_url": "https://attack.mitre.org/techniques/T1557/",
+    },
+    "Missing Header: X-Frame-Options": {
+        "cwe": "CWE-1021", "owasp": "A05:2021", "mitre": "T1185",
+        "mitre_name": "Browser Session Hijacking",
+        "cwe_url":   "https://cwe.mitre.org/data/definitions/1021.html",
+        "owasp_url": "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/",
+        "mitre_url": "https://attack.mitre.org/techniques/T1185/",
+    },
+    "Missing Header": {
+        "cwe": "CWE-693", "owasp": "A05:2021",
+        "cwe_url":   "https://cwe.mitre.org/data/definitions/693.html",
+        "owasp_url": "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/",
+    },
+    "Weak Header": {
+        "cwe": "CWE-693", "owasp": "A05:2021",
+        "cwe_url":   "https://cwe.mitre.org/data/definitions/693.html",
+        "owasp_url": "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/",
+    },
+    # ── CORS ──────────────────────────────────────────────────────────────
+    "CORS Misconfiguration": {
         "cwe": "CWE-942", "owasp": "A05:2021", "mitre": "T1190",
         "mitre_name": "Exploit Public-Facing Application",
         "cwe_url":   "https://cwe.mitre.org/data/definitions/942.html",
         "owasp_url": "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/",
         "mitre_url": "https://attack.mitre.org/techniques/T1190/",
     },
+    # ── TLS / Transport ───────────────────────────────────────────────────
     "TLS: Certificate Expired": {
+        "cwe": "CWE-295", "owasp": "A02:2021", "mitre": "T1557",
+        "mitre_name": "Adversary-in-the-Middle",
+        "cwe_url":   "https://cwe.mitre.org/data/definitions/295.html",
+        "owasp_url": "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/",
+        "mitre_url": "https://attack.mitre.org/techniques/T1557/",
+    },
+    "TLS: Certificate Expiring": {
         "cwe": "CWE-295", "owasp": "A02:2021", "mitre": "T1557",
         "mitre_name": "Adversary-in-the-Middle",
         "cwe_url":   "https://cwe.mitre.org/data/definitions/295.html",
@@ -266,6 +352,13 @@ VULN_EDUCATION: dict[str, dict] = {
         "owasp_url": "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/",
         "mitre_url": "https://attack.mitre.org/techniques/T1557/",
     },
+    "TLS: Certificate Verification": {
+        "cwe": "CWE-295", "owasp": "A02:2021", "mitre": "T1557",
+        "mitre_name": "Adversary-in-the-Middle",
+        "cwe_url":   "https://cwe.mitre.org/data/definitions/295.html",
+        "owasp_url": "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/",
+        "mitre_url": "https://attack.mitre.org/techniques/T1557/",
+    },
     "Insecure Transport: No HTTPS": {
         "cwe": "CWE-319", "owasp": "A02:2021", "mitre": "T1040",
         "mitre_name": "Network Sniffing",
@@ -273,13 +366,7 @@ VULN_EDUCATION: dict[str, dict] = {
         "owasp_url": "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/",
         "mitre_url": "https://attack.mitre.org/techniques/T1040/",
     },
-    "Directory Listing Enabled": {
-        "cwe": "CWE-548", "owasp": "A05:2021", "mitre": "T1083",
-        "mitre_name": "File and Directory Discovery",
-        "cwe_url":   "https://cwe.mitre.org/data/definitions/548.html",
-        "owasp_url": "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/",
-        "mitre_url": "https://attack.mitre.org/techniques/T1083/",
-    },
+    # ── Secrets / Credentials ─────────────────────────────────────────────
     "Secret Exposure": {
         "cwe": "CWE-312", "owasp": "A02:2021", "mitre": "T1552",
         "mitre_name": "Unsecured Credentials",
@@ -287,6 +374,63 @@ VULN_EDUCATION: dict[str, dict] = {
         "owasp_url": "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/",
         "mitre_url": "https://attack.mitre.org/techniques/T1552/",
     },
+    # ── Misconfiguration ──────────────────────────────────────────────────
+    "Directory Listing Enabled": {
+        "cwe": "CWE-548", "owasp": "A05:2021", "mitre": "T1083",
+        "mitre_name": "File and Directory Discovery",
+        "cwe_url":   "https://cwe.mitre.org/data/definitions/548.html",
+        "owasp_url": "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/",
+        "mitre_url": "https://attack.mitre.org/techniques/T1083/",
+    },
+    "Sensitive Path Exposure": {
+        "cwe": "CWE-538", "owasp": "A05:2021", "mitre": "T1083",
+        "mitre_name": "File and Directory Discovery",
+        "cwe_url":   "https://cwe.mitre.org/data/definitions/538.html",
+        "owasp_url": "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/",
+        "mitre_url": "https://attack.mitre.org/techniques/T1083/",
+    },
+    "Information Disclosure": {
+        "cwe": "CWE-200", "owasp": "A05:2021", "mitre": "T1082",
+        "mitre_name": "System Information Discovery",
+        "cwe_url":   "https://cwe.mitre.org/data/definitions/200.html",
+        "owasp_url": "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/",
+        "mitre_url": "https://attack.mitre.org/techniques/T1082/",
+    },
+    # ── Cookies ───────────────────────────────────────────────────────────
+    "Insecure Cookie": {
+        "cwe": "CWE-1004", "owasp": "A05:2021", "mitre": "T1185",
+        "mitre_name": "Browser Session Hijacking",
+        "cwe_url":   "https://cwe.mitre.org/data/definitions/1004.html",
+        "owasp_url": "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/",
+        "mitre_url": "https://attack.mitre.org/techniques/T1185/",
+    },
+    # ── SQLi surface (INFO level) ─────────────────────────────────────────
+    "SQLi Attack Surface": {
+        "cwe": "CWE-89", "owasp": "A03:2021",
+        "cwe_url":   "https://cwe.mitre.org/data/definitions/89.html",
+        "owasp_url": "https://owasp.org/Top10/A03_2021-Injection/",
+    },
+}
+
+
+# ── Finding category groups for the dashboard category filter ─────────────
+#
+# Each entry maps a user-friendly label to a list of vuln_type prefixes.
+# The category filter in the findings section uses this to let users quickly
+# show/hide entire groups (e.g. "just show me Injection findings").
+#
+# HOW TO ADD A NEW CATEGORY:
+#   Add a new key with its prefix list. The filter will appear automatically.
+VULN_CATEGORY_MAP: dict[str, list[str]] = {
+    "🔴 Injection"        : ["SQL Injection", "Server-Side Template Injection", "SQLi Attack Surface"],
+    "⚡ XSS"             : ["Cross-Site Scripting", "XSS Attack Surface"],
+    "🔒 Auth / JWT"       : ["Open Redirect", "JWT Algorithm"],
+    "🛡 Security Headers" : ["Missing Header", "Weak Header", "CORS Misconfiguration"],
+    "🍪 Cookies"          : ["Insecure Cookie"],
+    "🔐 TLS / HTTPS"      : ["TLS:", "Insecure Transport"],
+    "🗝 Secrets"          : ["Secret Exposure"],
+    "📂 Exposed Files"    : ["Sensitive Path Exposure", "Directory Listing"],
+    "ℹ️ Info"             : ["Information Disclosure", "SQLi Attack Surface", "XSS Attack Surface"],
 }
 
 
@@ -666,28 +810,85 @@ def render_results(results: dict):
         {total} finding(s) sorted by severity · Click to expand each finding
     </div>""", unsafe_allow_html=True)
 
-    # Filters
-    fc1, fc2 = st.columns([3,2])
+    # ── Sticky filters — persisted in session state so they survive reruns ──
+    # Initialize session state defaults on first load
+    if "filter_sev" not in st.session_state:
+        st.session_state["filter_sev"] = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
+    if "filter_cat" not in st.session_state:
+        st.session_state["filter_cat"] = "All Categories"
+    if "filter_ai_only" not in st.session_state:
+        st.session_state["filter_ai_only"] = False
+
+    # Filter row 1 — severity and category
+    fc1, fc2 = st.columns([3, 2])
     with fc1:
+        # Severity filter — select which severity levels to show
+        # 💡 Tip: uncheck LOW and INFO to focus on critical issues first
         filter_sev = st.multiselect(
-            "Severity filter",
-            ["CRITICAL","HIGH","MEDIUM","LOW","INFO"],
-            default=["CRITICAL","HIGH","MEDIUM","LOW","INFO"],
-            label_visibility="collapsed",
+            "Show findings with severity:",
+            options  = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"],
+            default  = st.session_state["filter_sev"],
+            key      = "filter_sev_widget",
+            help     = "CRITICAL/HIGH = fix immediately · MEDIUM = fix soon · LOW/INFO = best practice",
         )
+        st.session_state["filter_sev"] = filter_sev
+
     with fc2:
-        ai_only = st.checkbox("AI-verified findings only", value=False)
+        # Category filter — group findings by type for easier navigation
+        cat_options = ["All Categories"] + list(VULN_CATEGORY_MAP.keys())
+        filter_cat = st.selectbox(
+            "Filter by type:",
+            options  = cat_options,
+            index    = cat_options.index(st.session_state["filter_cat"])
+                       if st.session_state["filter_cat"] in cat_options else 0,
+            key      = "filter_cat_widget",
+            help     = "Quickly focus on one vulnerability category (XSS, Headers, Secrets, etc.)",
+        )
+        st.session_state["filter_cat"] = filter_cat
+
+    # Filter row 2 — AI verified toggle
+    ai_only = st.checkbox(
+        "✦ Show AI-verified findings only",
+        value = st.session_state["filter_ai_only"],
+        key   = "filter_ai_widget",
+        help  = "When checked, only shows findings that the AI confirmed as real vulnerabilities.",
+    )
+    st.session_state["filter_ai_only"] = ai_only
+
+    # ── Apply filters ──────────────────────────────────────────────────────
+    def _matches_category(f: dict, cat: str) -> bool:
+        """Check if a finding's vuln_type matches the selected category."""
+        if cat == "All Categories":
+            return True
+        prefixes = VULN_CATEGORY_MAP.get(cat, [])
+        vuln = f.get("vuln_type", "")
+        return any(vuln.startswith(p) or p in vuln for p in prefixes)
 
     filtered = [
         f for f in findings
         if f.get("severity") in filter_sev
+        and _matches_category(f, filter_cat)
         and (not ai_only or f.get("ai_verified") == 1)
     ]
 
-    st.markdown(f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.68rem;color:#4a6280;margin-bottom:0.75rem;">Showing {len(filtered)} of {total}</div>', unsafe_allow_html=True)
+    # Show a clear count so users know how many findings match their filters
+    filter_summary = f"Showing {len(filtered)} of {total} findings"
+    if filter_cat != "All Categories":
+        filter_summary += f" · filtered by: {filter_cat}"
+    if ai_only:
+        filter_summary += " · AI verified only"
 
-    for f in filtered:
-        render_finding_card(f)
+    st.markdown(
+        f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.68rem;'
+        f'color:#4a6280;margin-bottom:0.75rem;">{filter_summary}</div>',
+        unsafe_allow_html=True
+    )
+
+    if not filtered:
+        st.info("No findings match your current filters. Try expanding the severity or category selection.")
+    else:
+        for f in filtered:
+            render_finding_card(f)
 
     # Optional export — downloads are secondary, viewing inline is primary
     st.markdown("<br>", unsafe_allow_html=True)
@@ -759,7 +960,7 @@ def build_text_report(results: dict) -> str:
 def render_sidebar():
     with st.sidebar:
         st.markdown('<div class="sidebar-logo">🛡️ WebPenTest AI</div>', unsafe_allow_html=True)
-        st.markdown('<div class="sidebar-sub">v1.3 · Authorized Testing Only</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sidebar-sub">v1.4 · Authorized Testing Only</div>', unsafe_allow_html=True)
         st.divider()
 
         # FIX 1: cached — won't re-fetch on every interaction

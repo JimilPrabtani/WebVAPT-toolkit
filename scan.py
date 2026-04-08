@@ -1,8 +1,16 @@
-﻿import sys
+import sys
 import argparse
+
+# Load .env FIRST — before any other import reads os.getenv().
+# Without this, provider_factory.py may read empty env vars if config.py
+# hasn't been imported yet when AI_analyzer.py calls get_provider().
+from dotenv import load_dotenv
+load_dotenv()
+
 from scanner.engine        import run_scan
 from reports.report_writer import save_report
 from config                import ALLOW_PRIVATE_TARGETS, is_ssrf_safe
+
 
 
 def parse_args():

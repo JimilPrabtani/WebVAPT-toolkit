@@ -3,16 +3,34 @@ ai/provider_factory.py
 ────────────────────────
 Reads AI_PROVIDER and AI_FALLBACK from .env and builds a provider chain.
 
-Default models (configure via .env to override):
-  - Gemini:    gemini-2.0-flash
+HOW PROVIDER SELECTION WORKS:
+  1. Reads AI_PROVIDER (e.g. "gemini") from .env
+  2. Reads AI_FALLBACK (e.g. "openai,anthropic") from .env
+  3. Builds a list of providers in order: [primary, fallback1, fallback2, ...]
+  4. Returns a _FallbackChainProvider that tries each one in sequence
+  5. If primary fails (quota, bad key, model error) → automatically tries next provider
+
+EXAMPLE .env CONFIGURATION:
+  AI_PROVIDER=gemini          # Primary provider
+  GEMINI_API_KEY=your_key
+  AI_FALLBACK=openai          # Fallback if Gemini fails
+  OPENAI_API_KEY=your_key
+
+DEFAULT MODELS (override via .env):
+  - Gemini:    gemini-2.0-flash  (fast, works on free tier)
   - OpenAI:    gpt-4o
   - Anthropic: claude-sonnet-4-6
-  - Ollama:    user-configured local models
+  - Ollama:    user-configured local model
 
-Usage (anywhere in the codebase):
-    from ai.provider_factory import get_provider
-    provider = get_provider()
-    response = provider.complete(system_prompt, user_prompt)
+HOW TO ADD A NEW PROVIDER:
+  1. Create ai/providers/my_provider.py implementing the AIProvider interface (see base.py)
+  2. Add a new if block in _build_provider() below
+  3. Add the env var docs to .env.example
+
+USAGE (anywhere in the codebase):
+  from ai.provider_factory import get_provider
+  provider = get_provider()
+  response = provider.complete(system_prompt, user_prompt)
 """
 
 import json

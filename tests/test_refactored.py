@@ -23,39 +23,48 @@ import requests
 class TestGeminiAnalyzerRefactoring:
     """Test that gemini_analyzer now uses provider_factory correctly."""
     
-    def test_analyze_finding_uses_provider_factory(self):
-        """Verify analyze_finding() uses get_provider() instead of hardcoded Gemini."""
-        from ai.AI_analyzer import analyze_finding
-        
-        finding = Finding(
-            vuln_type="Test XSS",
-            severity="HIGH",
-            url="https://example.com/test",
-            detail="Test detail",
-            evidence="<script>alert(1)</script>",
-            remediation="Placeholder"
-        )
-        
+    def test_analyze_scan_uses_batched_approach(self):
+        """Verify analyze_scan() sends all findings in ONE batched AI call, not N calls."""
+        from ai.AI_analyzer import analyze_scan
+
+        scan_result = ScanResult(target_url="https://example.com")
+        scan_result.add(Finding(
+            vuln_type  = "Test XSS",
+            severity   = "HIGH",
+            url        = "https://example.com/test",
+            detail     = "Test detail",
+            evidence   = "<script>alert(1)</script>",
+            remediation= "Placeholder"
+        ))
+        scan_result.add(Finding(
+            vuln_type  = "Test SQLi",
+            severity   = "CRITICAL",
+            url        = "https://example.com/search",
+            detail     = "SQL error found",
+            evidence   = "You have an error in your SQL syntax",
+            remediation= "Placeholder"
+        ))
+
         # Mock the provider factory
-        with patch('ai.gemini_analyzer.get_provider') as mock_get_provider:
+        with patch('ai.AI_analyzer.get_provider') as mock_get_provider:
             mock_provider = MagicMock(spec=AIProvider)
+            # Batch analysis returns analyses array
             mock_provider.complete.return_value = AIResponse(
-                content='{"verified": true, "cvss_score": 7.5, "severity": "HIGH"}',
+                content='{"analyses": [{"verified": true, "cvss_score": 7.5, "severity": "HIGH", "confidence": "HIGH"}, {"verified": true, "cvss_score": 9.0, "severity": "CRITICAL", "confidence": "HIGH"}]}',
                 model_used="test-model",
                 provider="mock"
             )
             mock_get_provider.return_value = mock_provider
-            
-            with patch('ai.gemini_analyzer.ENABLE_AI_ANALYSIS', True):
-                result = analyze_finding(finding)
-            
-            # Verify get_provider was called
-            mock_get_provider.assert_called_once()
-            # Verify provider.complete was called with system and user prompts
-            mock_provider.complete.assert_called_once()
-            # Verify finding was enriched
-            assert result.ai_verified == True
-            assert result.cvss_score == 7.5
+
+            with patch('ai.AI_analyzer.ENABLE_AI_ANALYSIS', True):
+                result = analyze_scan(scan_result)
+
+            # New batched approach: 2 total calls (1 batch + 1 summary), NOT one per finding
+            assert mock_provider.complete.call_count == 2, (
+                f"Expected 2 calls (batch + summary), got {mock_provider.complete.call_count}. "
+                "The batched approach must NOT send one call per finding."
+            )
+            assert isinstance(result, dict)
     
     def test_analyze_scan_uses_provider_factory(self):
         """Verify analyze_scan() uses multi-provider chain."""
@@ -71,7 +80,7 @@ class TestGeminiAnalyzerRefactoring:
             remediation="test"
         ))
         
-        with patch('ai.gemini_analyzer.get_provider') as mock_get_provider:
+        with patch('ai.AI_analyzer.get_provider') as mock_get_provider:
             mock_provider = MagicMock(spec=AIProvider)
             mock_provider.name = "test-chain"
             mock_provider.complete.return_value = AIResponse(
@@ -81,7 +90,7 @@ class TestGeminiAnalyzerRefactoring:
             )
             mock_get_provider.return_value = mock_provider
             
-            with patch('ai.gemini_analyzer.ENABLE_AI_ANALYSIS', True):
+            with patch('ai.AI_analyzer.ENABLE_AI_ANALYSIS', True):
                 result = analyze_scan(scan_result)
             
             mock_get_provider.assert_called()
