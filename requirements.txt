@@ -8,23 +8,21 @@ colorama==0.4.6
 fastapi==0.111.0
 uvicorn[standard]==0.29.0
 pydantic==2.7.1
-slowapi==0.1.9          # rate limiting for FastAPI (pip install slowapi)
 
 # ── Database ──────────────────────────────────────
 # sqlite3 is part of Python stdlib — no install needed
 
-# ── AI Layer (primary) ────────────────────────────
-google-generativeai==0.5.4
-
-# ── AI Layer (optional providers) ─────────────────
+# ── AI Layer (single OpenAI-compatible provider) ──
 openai>=1.30.0          # OpenAI GPT-4o, and all OpenAI-compatible endpoints
-anthropic>=0.28.0       # Anthropic Claude
-# ollama is API-based (no pip package needed, just run the ollama server)
 
-# ── Frontend ──────────────────────────────────────
-streamlit==1.35.0
+# ── TUI (black-and-white terminal: python tui.py) ───
+textual>=0.86
+
+# ── Web terminal (uvicorn main:app → open /terminal) ──
+pywinpty>=2.0.0; sys_platform=='win32'   # ConPTY backend that runs tui.py per browser session
 
 # ── Dev / Testing ─────────────────────────────────
-pytest==8.2.0
+pytest>=8.4,<9
+pytest-asyncio>=1.4.0   # headless Textual Pilot tests (tests/test_tui.py)
 ruff>=0.4.0             # linting
 bandit>=1.7.9           # SAST on this codebase itself

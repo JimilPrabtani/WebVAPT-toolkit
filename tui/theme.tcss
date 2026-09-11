@@ -1,0 +1,166 @@
+/* WEBVAPT terminal — monochrome incident-report world.
+   Ground: black. Ink: white. Secondary ink: gray.
+   Hierarchy comes from weight, rules, and inverse video — never hue.
+   No accent colour exists on purpose: severity is text ([!!]/[!]), not paint. */
+
+WebVaptApp {
+    background: #000000;
+    color: #FFFFFF;
+}
+
+#topbar {
+    background: #FFFFFF;
+    color: #000000;
+    text-style: bold;
+    height: 1;
+    padding: 0 1;
+}
+
+#tabbar {
+    background: #000000;
+    color: #FFFFFF;
+    height: 1;
+    padding: 0 1;
+}
+#tabbar .active-tab {
+    background: #FFFFFF;
+    color: #000000;
+    text-style: bold;
+}
+
+#statusline {
+    background: #000000;
+    color: #9a9a9a;
+    height: 1;
+    padding: 0 1;
+}
+
+TabbedContent {
+    background: #000000;
+    color: #FFFFFF;
+}
+/* Our own keyline (#tabbar) is the tab UI — hide Textual's blue tab strip. */
+TabbedContent Tabs, Tabs {
+    display: none;
+}
+TabPane {
+    background: #000000;
+    color: #FFFFFF;
+    padding: 1 2;
+}
+
+.rule {
+    color: #9a9a9a;
+    height: 1;
+}
+
+.panel-title {
+    text-style: bold;
+    color: #FFFFFF;
+    margin-top: 1;
+}
+.dim {
+    color: #9a9a9a;
+}
+
+Input, Select, Checkbox {
+    background: #000000;
+    color: #FFFFFF;
+    border: solid #9a9a9a;
+}
+Input:focus, Select:focus, Button:focus {
+    border: solid #FFFFFF;
+}
+
+Button {
+    background: #000000;
+    color: #FFFFFF;
+    border: solid #FFFFFF;
+}
+Button:focus, Button:hover {
+    background: #FFFFFF;
+    color: #000000;
+    text-style: bold;
+}
+
+DataTable {
+    background: #000000;
+    color: #FFFFFF;
+}
+DataTable .datatable--header {
+    background: #FFFFFF;
+    color: #000000;
+    text-style: bold;
+}
+DataTable .datatable--cursor {
+    background: #2a2a2a;
+    color: #FFFFFF;
+}
+
+RichLog {
+    background: #000000;
+    color: #FFFFFF;
+    border: solid #9a9a9a;
+    height: 12;
+}
+
+ProgressBar {
+    color: #FFFFFF;
+}
+ProgressBar .bar--bar {
+    background: #FFFFFF;
+}
+ProgressBar .bar--background {
+    background: #2a2a2a;
+}
+
+#detail {
+    border: solid #9a9a9a;
+    padding: 1 2;
+    height: auto;
+    max-height: 24;
+}
+
+Footer {
+    background: #FFFFFF;
+    color: #000000;
+}
+FooterKey {
+    background: #FFFFFF;
+}
+FooterKey .footer-key--key {
+    color: #FFFFFF;
+    background: #000000;
+    text-style: bold;
+}
+FooterKey .footer-key--description {
+    color: #000000;
+    background: #FFFFFF;
+}
+FooterKey:hover {
+    background: #FFFFFF;
+    color: #000000;
+}
+
+/* Toggle/checkbox mark: white X on black, never theme green. */
+ToggleButton > .toggle--button, Checkbox > .toggle--button {
+    color: #9a9a9a;
+    background: #000000;
+}
+ToggleButton.-on > .toggle--button, Checkbox.-on > .toggle--button {
+    color: #FFFFFF;
+    background: #000000;
+    text-style: bold;
+}
+
+/* Scrollbars: monochrome only. */
+Scrollbar, ScrollbarCorner, ScrollToTop, ScrollToEnd {
+    background: #000000;
+    color: #FFFFFF;
+}
+Scrollbar .scrollbar--track {
+    background: #000000;
+}
+Scrollbar .scrollbar--thumb {
+    background: #9a9a9a;
+}

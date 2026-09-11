@@ -20,6 +20,7 @@ STANDARDS COVERED:
   CWE (Common Weakness Enumeration) — https://cwe.mitre.org/
   MITRE ATT&CK — https://attack.mitre.org/
   SANS/CWE Top 25 — https://www.sans.org/top25-software-errors/
+  NIST Cybersecurity Framework (CSF) 2.0 — https://www.nist.gov/cyberframework
 """
 
 
@@ -38,8 +39,11 @@ Rules:
   1. Respond with ONLY valid JSON — no markdown, no code fences, no text outside JSON.
   2. Your response must contain an "analyses" array with exactly one object per finding.
   3. Keep each analysis focused and practical — developers need to understand and act on this.
-  4. Be specific about attack scenarios — reference the actual URL and evidence given."""
-
+  4. Be specific about attack scenarios — reference the actual URL and evidence given.
+  5. For "cve_ids": only list REAL, well-known CVE identifiers you are confident about,
+     in the exact format CVE-YYYY-NNNN. If none apply or you are unsure, return an empty
+     array []. NEVER invent or guess CVE numbers — a fabricated CVE is worse than none.
+"""
 
 BATCH_ANALYSIS_PROMPT = """Analyze these {count} security findings and return a JSON object.
 
@@ -69,7 +73,8 @@ Return EXACTLY this JSON structure:
       "references": [
         "https://owasp.org/... (OWASP)",
         "https://cwe.mitre.org/... (CWE)"
-      ]
+      ],
+      "cve_ids": ["CVE-2023-1234", "CVE-2024-5678"] (only REAL, relevant CVE IDs in CVE-YYYY-NNNN format; return [] if none apply or unsure)
     }},
     ... one object per finding in the same order they were given ...
   ]

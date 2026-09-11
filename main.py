@@ -1,13 +1,16 @@
 import os
+from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from contextlib import asynccontextmanager
+from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
 load_dotenv()
 
 from api.routes import router
+from api.terminal import router as terminal_router
 from api.database import init_db
 from config import validate_config
 
@@ -17,25 +20,16 @@ _API_KEY: str = os.getenv("API_KEY", "")
 # Paths that are always public (health check / root)
 _OPEN_PATHS = {"/"}
 
+# The web terminal is intentionally public like a local terminal session:
+# browsers cannot send the X-API-Key header on page loads, and each
+# connection only gets the TUI (never a shell). Do NOT expose this server
+# to a network without reverse-proxy authentication in front of it.
+_OPEN_PATHS |= {"/terminal", "/ws/terminal"}
+
 # Expose Swagger UI only when EXPOSE_DOCS=true (default: false for security)
 _EXPOSE_DOCS = os.getenv("EXPOSE_DOCS", "false").lower() == "true"
 if _EXPOSE_DOCS:
     _OPEN_PATHS |= {"/docs", "/redoc", "/openapi.json"}
-
-# ── Rate limiting ─────────────────────────────────────────────────────────
-# Uses slowapi (pip install slowapi) — a thin Starlette wrapper around limits.
-# 10 scan requests per minute per IP prevents resource exhaustion from
-# unauthenticated callers hammering POST /scan.
-try:
-    from slowapi import _rate_limit_exceeded_handler
-    from slowapi.errors import RateLimitExceeded
-    from api.limiter import limiter as _limiter, RATE_LIMITING_AVAILABLE as _rate_limiting_available
-
-except ImportError:
-    _limiter = None
-    _rate_limiting_available = False
-    print("[!] slowapi not installed — rate limiting disabled. Run: pip install slowapi")
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -45,8 +39,6 @@ async def lifespan(app: FastAPI):
         print("[*] API key authentication ENABLED (X-API-Key header required).")
     else:
         print("[!] WARNING: API_KEY not set — API is unprotected. Set API_KEY in .env for production.")
-    if _rate_limiting_available:
-        print("[*] Rate limiting ENABLED — 10 scan requests/minute/IP.")
     print("[*] Database ready. API at http://localhost:8000 | Docs at http://localhost:8000/docs")
     yield
     print("[*] Shutting down.")
@@ -58,17 +50,12 @@ app = FastAPI(
     lifespan = lifespan,
 )
 
-# Attach rate limiter state if available
-if _rate_limiting_available:
-    app.state.limiter = _limiter
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-
 # ── API key middleware ───────────────────────────────────────────────────────
 @app.middleware("http")
 async def api_key_middleware(request: Request, call_next):
     """Enforce API key authentication when API_KEY is configured in .env."""
-    if _API_KEY and request.url.path not in _OPEN_PATHS:
+    if _API_KEY and request.url.path not in _OPEN_PATHS \
+            and not request.url.path.startswith("/static/"):
         provided = request.headers.get("X-API-Key", "")
         if provided != _API_KEY:
             return JSONResponse(
@@ -80,10 +67,17 @@ async def api_key_middleware(request: Request, call_next):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins  = ["http://localhost:8501", "http://127.0.0.1:8501"],
+    # No browser client ships with the project (the TUI and CLI call the
+    # scan engine in-process), so no cross-origin access is granted.
+    # Add an origin here only if you build a browser frontend for the API.
+    allow_origins  = [],
     # Explicit lists follow least-privilege — update if new endpoint methods are added.
     allow_methods  = ["GET", "POST", "DELETE"],
     allow_headers  = ["Content-Type", "X-API-Key"],
 )
 
 app.include_router(router, prefix="/api/v1", tags=["Scanning"])
+app.include_router(terminal_router, tags=["Web Terminal"])
+
+# Vendored xterm.js for /terminal — no CDN, works offline.
+app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "web" / "static")), name="static")

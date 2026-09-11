@@ -146,13 +146,21 @@ def check_dom_xss(url: str, response: requests.Response) -> List[Finding]:
                 )
 
                 findings.append(Finding(
-                    vuln_type  = "Cross-Site Scripting (DOM-based Indicator)",
-                    severity   = "MEDIUM" if has_source else "LOW",
+                    vuln_type  = "DOM Sink Detected (Potential XSS)",
+                    # A sink WITHOUT a user-controlled source is usually framework/bundled
+                    # JS noise — report it as INFO and ask for manual review. Only when a
+                    # source is present do we escalate to LOW ("verify it's reachable").
+                    severity   = "LOW" if has_source else "INFO",
                     url        = url,
                     detail     = (
                         f"Potentially unsafe DOM sink '{sink_name}' detected in inline script"
-                        + (" with a user-controlled source — elevated XSS risk." if has_source
-                           else ". Manual review recommended.")
+                        + (". A user-controlled source (location.hash/search, etc.) is also "
+                           "present in the same block — verify whether attacker input can reach "
+                           "the sink (that would be real DOM XSS)."
+                           if has_source
+                           else ". No obvious user-controlled source in the same block — this is "
+                           "frequently a false positive in framework/bundled JavaScript and needs "
+                           "manual review to confirm exploitability.")
                     ),
                     evidence   = _extract_context(script_content, pattern),
                     remediation= (

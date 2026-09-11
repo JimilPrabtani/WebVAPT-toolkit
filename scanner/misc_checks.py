@@ -257,21 +257,30 @@ def check_sensitive_paths(base_url: str) -> list[Finding]:
             if (
                 resp.status_code == 200
                 and homepage_size > 0
-                and path not in INFO_PATHS
-                and abs(len(resp.content) - homepage_size) <= 50
+                and (path not in INFO_PATHS or "text/html" in resp.headers.get("Content-Type", ""))
+                and (path in INFO_PATHS or abs(len(resp.content) - homepage_size) <= 50)
             ):
                 content_type = resp.headers.get("Content-Type", "")
-                # Unless the Content-Type is clearly a file (not HTML)
-                if not any(t in content_type for t in PLAINTEXT_TYPES):
+                # Skip HTML catch-all pages; real info files have non-HTML types
+                if "text/html" in content_type or (path not in INFO_PATHS and not any(t in content_type for t in PLAINTEXT_TYPES)):
                     continue  # SPA catch-all — skip this false positive
 
             # ── 403 handling ───────────────────────────────────────────────
-            # A 403 on a high-value path means: file EXISTS but access is blocked.
-            # Still worth flagging — the file shouldn't exist at that path at all.
+            # A 403 on a high-value path means: file EXISTS but access is BLOCKED.
+            # The contents were NOT exposed, so this is informational (exists but
+            # protected) — NOT a credential leak. Only a 200 (readable) response is
+            # a genuine exposure. Treating a 403 as CRITICAL produces false positives
+            # on every normal WordPress site (wp-config.php always 403s when protected).
             if resp.status_code == 403:
                 if path not in EXISTENCE_BY_403:
                     continue
-                description = description + " (access blocked — file exists on server)"
+                # Downgrade: file exists but is NOT readable → low risk
+                severity = "LOW"
+                description = (
+                    f"{path} exists on the server but access is blocked (HTTP 403) — "
+                    f"its contents are NOT exposed. This is expected for WordPress sites "
+                    f"and is only a real concern if the file should not exist at all."
+                )
 
             findings.append(Finding(
                 vuln_type   = f"Sensitive Path Exposure: {path}",

@@ -51,3 +51,6 @@ desktop.ini
 # ── Logs ──────────────────────────────────────────────────────────────────
 *.log
 logs/
+
+# ── Local-only tooling output (screenshots, probes — never commit) ─────────
+.impeccable/

@@ -1,12 +1,12 @@
 # 🔐 WebPenTest AI Toolkit
 
 > Automated web application penetration testing with AI-powered vulnerability analysis.  
-> Built for OWASP Top 10 coverage. Multi-provider AI. Production-ready API. Real-time dashboard.
+> Built for OWASP Top 10 coverage. Single AI provider. Production-ready API. Black-and-white terminal UI, in your terminal or in a browser.
 
 ![Version](https://img.shields.io/badge/Version-1.3-blue)
 ![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.111-green?logo=fastapi)
-![Streamlit](https://img.shields.io/badge/Streamlit-1.35-red?logo=streamlit)
+![Textual](https://img.shields.io/badge/Textual-TUI-lightgrey)
 ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 ![Status](https://img.shields.io/badge/Status-Active-brightgreen)
 
@@ -19,17 +19,18 @@
 1. **Crawls** a target web application and builds a complete map of its pages
 2. **Scans** every page concurrently across 7 vulnerability categories (30+ checks)
 3. **Sends** HIGH/CRITICAL findings to an AI provider for deep analysis, CVSS scoring, and fix generation
-4. **Stores** everything in a local SQLite database and presents it through a real-time dashboard
+4. **Stores** everything in a local SQLite database and presents it through the terminal UI
 
 ```
-Target URL → Crawl → Concurrent Checks → AI Analysis → SQLite → Dashboard / API / Report
+Target URL → Crawl → Concurrent Checks → AI Analysis → SQLite → TUI / API / Report
 ```
 
 You can use it three ways:
 
 | Mode | Entry Point | Best For |
 |---|---|---|
-| **Dashboard** | `app.py` (Streamlit) | Interactive use, demos, presentations |
+| **Terminal** | `python tui.py` (Textual, black-and-white) | Interactive use, labs, demos over SSH |
+| **Web terminal** | `uvicorn main:app` → open `/terminal` | Hosted use — same TUI in a browser tab |
 | **API** | `main.py` (FastAPI) | CI/CD pipelines, automation, integrations |
 | **CLI** | `scan.py` | Quick terminal scans, scripting |
 
@@ -37,15 +38,13 @@ You can use it three ways:
 
 ---
 
-## 🆕 What's New in v1.3
+## 🆕 What's New
 
-- **Bug fix: Critical syntax error in scan engine** — garbled function call in `engine.py` that crashed AI analysis on every scan
-- **Bug fix: TLS race condition** — TLS checks were running on every page in parallel instead of once per host, causing duplicate findings
-- **Bug fix: Fake AI model names** — corrected `provider_factory.py` defaults to real model IDs (`gemini-2.0-flash`, `gpt-4o`, `claude-sonnet-4-6`)
-- **History tab rebuilt** — full inline report viewer, read every finding directly in the dashboard without downloading anything
-- **Delete scans** — two-step confirmation delete with automatic sidebar stat refresh
-- **Provider-agnostic UI** — all user-facing text now says "AI Analysis" instead of hardcoding Gemini
-- **XSS safety in History tab** — target URLs HTML-escaped before rendering
+- **Terminal UI is the interface** — the Streamlit dashboard (`app.py` + `ui/`) is deleted. `python tui.py` (Textual, black-and-white) is the primary UI: Scan / Results / History / Help tabs, keys `1-4`, `Q` quits.
+- **Web terminal** — `uvicorn main:app` → open `/terminal`: the same TUI in a browser tab (xterm.js, vendored locally, works offline). One private `tui.py` session per tab over WebSocket.
+- **Single AI provider** — the multi-provider factory (Gemini/Anthropic/Ollama adapters) is deleted. One OpenAI-compatible endpoint (`OPENAI_API_KEY` + `CUSTOM_AI_BASE_URL` + `AI_MODEL`), batched into 2 calls per scan.
+- **Dead weight removed** — `slowapi`, `google-generativeai`, `anthropic`, `streamlit` gone from requirements; stale tests repointed so the suite is fully green.
+- **Typing-safe shortcuts** — `1-4`/`Q` yield while focus is in an input field, so typing a URL never switches tabs or quits.
 
 ---
 
@@ -65,8 +64,8 @@ You can use it three ways:
 
 ### AI Layer
 
-- **Multi-provider**: Gemini · OpenAI · Anthropic · Ollama · any OpenAI-compatible endpoint
-- **Fallback chain**: if primary fails, automatically tries the next provider
+- **Single provider**: any OpenAI-compatible endpoint (`OPENAI_API_KEY` + `CUSTOM_AI_BASE_URL` + `AI_MODEL` in `.env`)
+- **Batched calls**: all priority findings in ONE call + one executive-summary call (2 total per scan, no rate-limit storms)
 - **Per-finding**: CVSS 3.1 score · confidence · attack scenario · remediation steps · secure code example · references
 - **Executive summary**: risk score 0–100 · key risks · immediate actions · positive observations
 - **Quota-aware**: only CRITICAL/HIGH/MEDIUM go to AI — INFO/LOW stay local
@@ -84,10 +83,15 @@ You can use it three ways:
 ```
 webpentest/
 ├── scan.py                    # CLI entry point
+├── tui.py                     # Terminal UI entry point (Textual, black-and-white)
 ├── main.py                    # FastAPI server entry point
-├── app.py                     # Streamlit dashboard
 ├── config.py                  # Central config (env vars, SSRF guard, timeouts)
 ├── requirements.txt
+│
+├── tui/
+│   ├── app.py                 # Textual app — Scan / Results / History / Help tabs
+│   ├── backend.py             # Adapter: run_scan() + SQLite + report writer
+│   └── theme.tcss             # Monochrome theme (black ground, white ink)
 │
 ├── scanner/
 │   ├── engine.py              # Scan orchestrator — pipeline + thread pool controller
@@ -102,21 +106,21 @@ webpentest/
 │   └── tls_checks.py          # TLS certificate and protocol checks
 │
 ├── ai/
-│   ├── AI_analyzer.py         # AI orchestration (per-finding + executive summary)
-│   ├── provider_factory.py    # Provider selection + fallback chain builder
+│   ├── AI_analyzer.py         # AI orchestration (batched analysis + executive summary)
 │   ├── prompts.py             # Prompt templates
 │   └── providers/
-│       ├── base.py            # Abstract AIProvider interface
-│       ├── gemini_provider.py
-│       ├── openai_provider.py
-│       ├── anthropic_provider.py
-│       └── ollama_provider.py
+│       ├── base.py            # AIProvider interface + error types
+│       └── openai_provider.py # Single OpenAI-compatible provider
 │
 ├── api/
 │   ├── routes.py              # All FastAPI HTTP endpoints (7 routes)
+│   ├── terminal.py            # Web terminal: /terminal page + /ws/terminal sessions
 │   ├── database.py            # SQLite persistence layer
-│   ├── schemas.py             # Pydantic v2 request/response models
-│   └── limiter.py             # Rate limiter (10 scans/min/IP)
+│   └── schemas.py             # Pydantic v2 request/response models
+│
+├── web/
+│   ├── terminal.html          # xterm.js page hosting the TUI in a browser
+│   └── static/                # Vendored xterm.js (no CDN, works offline)
 │
 ├── reports/
 │   └── report_writer.py       # JSON + TXT report generation
@@ -126,7 +130,9 @@ webpentest/
 │   └── reports/               # Generated .json and .txt reports
 │
 └── tests/
-    └── test_refactored.py     # Pytest suite (30+ tests)
+    ├── test_refactored.py     # Scanner + AI + integration tests
+    ├── test_tui.py            # Headless Textual Pilot tests
+    └── test_web_terminal.py   # /terminal page + live WebSocket TUI boot
 ```
 
 ### Scan Pipeline — Step by Step
@@ -152,10 +158,9 @@ Step 3: DEDUPLICATE
   Identical findings from concurrent threads are dropped
 
 Step 4: AI ANALYSIS
-  analyze_scan() sends CRITICAL/HIGH/MEDIUM findings to AI provider
+  analyze_scan() sends CRITICAL/HIGH/MEDIUM findings to the AI in ONE batched call
   Per finding: CVSS, confidence, attack scenario, fix steps, code example
-  Falls back to next provider automatically if primary fails
-  Generates executive summary: risk score, key risks, immediate actions
+  Then one executive-summary call: risk score, key risks, immediate actions
 
 Step 5: PERSIST
   SQLite — saves scan record + all findings to scans.db
@@ -174,41 +179,47 @@ Step 6: REPORT
 git clone <repo-url>
 cd webpentest
 
-python -m venv venv
-source venv/bin/activate          # Linux/macOS
-# venv\Scripts\Activate.ps1       # Windows PowerShell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1          # Windows PowerShell
+# source .venv/bin/activate           # Linux/macOS
 
-pip install -r requirements.txt
+.\.venv\Scripts\python -m pip install -r requirements.txt
 ```
 
 ### 2. Configure
 
-```bash
-cp .env.example .env
-```
-
-Minimum `.env`:
+Create a `.env` file in the project root (never commit it — it's gitignored):
 
 ```env
-AI_PROVIDER=gemini
-GEMINI_API_KEY=your_key_here
+AI_PROVIDER=openai
+OPENAI_API_KEY=your_key_here
+CUSTOM_AI_BASE_URL=https://openrouter.ai/api/v1/
+AI_MODEL=thinkingmachines/inkling-small:free
 ENABLE_AI_ANALYSIS=true
 SCAN_TIMEOUT=10
 MAX_PAGES_TO_CRAWL=20
 ALLOW_PRIVATE_TARGETS=true
+ALLOW_INSECURE_TLS=true
+API_KEY=any_random_string_for_api_auth
+EXPOSE_DOCS=false
 ```
 
 ### 3. Run
 
-**Dashboard:**
+**Terminal TUI (no server needed):**
 ```bash
-# Terminal 1
-uvicorn main:app --reload --port 8000
-
-# Terminal 2
-streamlit run app.py
-# Open: http://localhost:8501
+python tui.py           # black-and-white TUI — keys 1-4 switch tabs, Q quits
+python tui.py --check   # headless smoke check (no TTY needed)
 ```
+
+**Web terminal (same TUI in a browser):**
+```bash
+uvicorn main:app --port 8000
+# Open: http://localhost:8000/terminal
+```
+Each browser tab gets a private TUI session running `tui.py` server-side.
+Bind to `127.0.0.1` by default; put authentication (reverse proxy / VPN)
+in front before exposing to a network — a visitor gets a working scanner.
 
 **CLI:**
 ```bash
@@ -219,7 +230,7 @@ python scan.py https://target.com --no-ai   # skip AI (no API key needed)
 **API only:**
 ```bash
 uvicorn main:app --reload --port 8000
-# Swagger UI: http://localhost:8000/docs
+# Interactive docs only when EXPOSE_DOCS=true in .env
 ```
 
 ---
@@ -253,19 +264,26 @@ curl -H "X-API-Key: your_key" http://localhost:8000/api/v1/history
 
 ---
 
-## 🖥️ Dashboard Guide
+## 🖥️ TUI Guide
 
-### New Scan Tab
-Enter a URL, toggle AI on/off, set page depth, hit **⚡ Scan**. Results appear inline.
+Keys `1-4` switch tabs, `Tab` moves focus, `Enter` activates, `Q` quits.
+Shortcuts yield while you're typing in a field, so entering a URL never
+switches tabs or quits. In the browser terminal, `Ctrl +` / `Ctrl -` zoom
+the text, `Ctrl 0` resets it.
+
+### Scan Tab
+Enter a URL, toggle AI on/off, set page depth, hit **START SCAN**. The live
+log streams progress; results open automatically on completion.
 
 ### History Tab
-- **📄 View** — full report inline, no download needed
-- **⬇ JSON** — optional export
-- **🗑 Delete** — two-step confirmation
-- **← Back** — return to the list
+- **Open** — load a past scan into Results
+- **Delete** — two-step confirmation
+- Reports are also saved as JSON + TXT under `data/reports/`
 
-### Finding Cards
-Each finding shows: severity badge · CVSS score · CWE + OWASP + MITRE ATT&CK badges · evidence · full AI-generated remediation with code examples.
+### Results Tab
+Summary (risk score, severity counts, executive summary) plus a findings
+table with category and AI-verified filters. Select a row for full detail:
+evidence plus AI-generated remediation with code examples.
 
 ---
 
@@ -305,8 +323,6 @@ python scan.py http://localhost:3000
 |---|---|
 | SSRF prevention | Resolves hostnames and blocks private/loopback IPs before scanning |
 | API authentication | `X-API-Key` header middleware |
-| Rate limiting | `slowapi` — 10 scan requests/min/IP |
-| XSS in dashboard | All user-controlled strings `html.escape()`'d before rendering |
 | Input validation | Pydantic v2 on all API bodies; UUID4 validation on scan IDs |
 | Secret redaction | Evidence shows only first 6 + last 4 chars of matched secrets |
 
@@ -332,13 +348,13 @@ python scan.py http://localhost:3000
 | Language | Python 3.11+ |
 | HTTP scanning | `requests` · `BeautifulSoup4` |
 | API server | FastAPI 0.111 + Uvicorn |
-| Rate limiting | slowapi |
 | Database | SQLite (`sqlite3`) |
 | Data validation | Pydantic v2 |
-| Dashboard | Streamlit 1.35 |
-| AI providers | Gemini · OpenAI · Anthropic · Ollama |
+| Terminal UI | Textual |
+| AI provider | OpenAI-compatible endpoint (`openai` package) |
+| Web terminal backend | pywinpty (ConPTY, Windows) |
 | Concurrency | `concurrent.futures.ThreadPoolExecutor` |
-| Testing | Pytest 8.2 |
+| Testing | Pytest + pytest-asyncio |
 
 ---
 

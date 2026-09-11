@@ -37,6 +37,7 @@ TROUBLESHOOTING:
 """
 
 import json
+import re
 import time
 from typing import Optional, Callable
 
@@ -48,8 +49,8 @@ from ai.prompts import (
     SUMMARY_SYSTEM,
     SUMMARY_PROMPT,
 )
-from ai.provider_factory import get_provider
-from ai.providers.base import AIProvider, ProviderError
+from ai.providers.openai_provider import OpenAIProvider
+from ai.providers.base import AIResponse, ProviderError
 
 
 def _parse_ai_response(response_text: str) -> dict:
@@ -80,6 +81,24 @@ def _parse_ai_response(response_text: str) -> dict:
         return {}
 
 
+_CVE_RE = re.compile(r"^CVE-\d{4}-\d{4,7}$")
+
+def _validate_cve_ids(raw) -> list:
+    """
+    Keep only well-formed CVE identifiers (CVE-YYYY-NNNN).
+
+    LLMs sometimes hallucinate CVE numbers, so we drop anything that doesn't
+    match the official format. A fabricated CVE is worse than no CVE at all.
+    """
+    if not isinstance(raw, list):
+        return []
+    return [
+        c.strip().upper()
+        for c in raw
+        if isinstance(c, str) and _CVE_RE.match(c.strip().upper())
+    ]
+
+
 def _apply_ai_data_to_finding(finding: Finding, ai_data: dict) -> None:
     """
     Apply the AI's analysis results to a Finding object in-place.
@@ -96,6 +115,7 @@ def _apply_ai_data_to_finding(finding: Finding, ai_data: dict) -> None:
     finding.owasp_id    = ai_data.get("owasp_id")
     finding.cwe_id      = ai_data.get("cwe_id")
     finding.sans_rank   = ai_data.get("sans_rank")
+    finding.cve_ids     = _validate_cve_ids(ai_data.get("cve_ids"))
 
     # Only override severity when AI has high confidence
     if ai_data.get("confidence") == "HIGH" and ai_data.get("severity"):
@@ -171,12 +191,12 @@ def analyze_scan(
         log("[!] AI analysis disabled (ENABLE_AI_ANALYSIS=false in .env)")
         return {}
 
-    # Initialize the provider chain (primary + fallbacks from .env)
+    # Initialize dynamically from .env — works with any endpoint/model/key
     try:
-        provider: AIProvider = get_provider()
-    except RuntimeError as e:
-        log(f"[!] No AI provider configured: {e}")
-        log("    → Add AI_PROVIDER=gemini and GEMINI_API_KEY=your_key to your .env file")
+        provider = OpenAIProvider()
+    except Exception as e:
+        log(f"[!] AI provider error: {e}")
+        log("    → Check AI_PROVIDER/.env settings and API key for the configured endpoint.")
         return {}
 
     # ── Sort findings by severity ──────────────────────────────────────────

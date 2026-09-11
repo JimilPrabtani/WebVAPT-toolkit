@@ -37,7 +37,7 @@ class Finding:
       - vuln_type, severity, url, detail, evidence, remediation
 
     Fields filled by the AI layer (ai/AI_analyzer.py):
-      - ai_verified, cvss_score, owasp_id, cwe_id, sans_rank
+      - ai_verified, cvss_score, owasp_id, cwe_id, sans_rank, cve_ids
 
     Fields filled by the dashboard display (app.py):
       - These are read-only display fields, not set on the Finding itself
@@ -61,6 +61,7 @@ class Finding:
     owasp_id:    Optional[str]  = None  # OWASP Top 10 category, e.g. "A03:2021"
     cwe_id:      Optional[str]  = None  # CWE identifier, e.g. "CWE-89"
     sans_rank:   Optional[str]  = None  # SANS/CWE Top 25 rank, e.g. "#1 CWE-79"
+    cve_ids:     list          = field(default_factory=list)  # AI-suggested CVE IDs, e.g. ["CVE-2023-1234"]
 
     def to_dict(self) -> dict:
         """
@@ -81,6 +82,7 @@ class Finding:
             "owasp_id":    self.owasp_id,
             "cwe_id":      self.cwe_id,
             "sans_rank":   self.sans_rank,
+            "cve_ids":     self.cve_ids,
         }
 
 

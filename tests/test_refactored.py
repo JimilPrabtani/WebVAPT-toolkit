@@ -21,7 +21,7 @@ import requests
 # ──────────────────────────────────────────────────────────────────────────
 
 class TestGeminiAnalyzerRefactoring:
-    """Test that gemini_analyzer now uses provider_factory correctly."""
+    """Test that the analyzer uses the OpenAI provider correctly."""
     
     def test_analyze_scan_uses_batched_approach(self):
         """Verify analyze_scan() sends all findings in ONE batched AI call, not N calls."""
@@ -45,8 +45,8 @@ class TestGeminiAnalyzerRefactoring:
             remediation= "Placeholder"
         ))
 
-        # Mock the provider factory
-        with patch('ai.AI_analyzer.get_provider') as mock_get_provider:
+        # Mock the provider constructor
+        with patch('ai.AI_analyzer.OpenAIProvider') as mock_openai:
             mock_provider = MagicMock(spec=AIProvider)
             # Batch analysis returns analyses array
             mock_provider.complete.return_value = AIResponse(
@@ -54,7 +54,7 @@ class TestGeminiAnalyzerRefactoring:
                 model_used="test-model",
                 provider="mock"
             )
-            mock_get_provider.return_value = mock_provider
+            mock_openai.return_value = mock_provider
 
             with patch('ai.AI_analyzer.ENABLE_AI_ANALYSIS', True):
                 result = analyze_scan(scan_result)
@@ -67,7 +67,7 @@ class TestGeminiAnalyzerRefactoring:
             assert isinstance(result, dict)
     
     def test_analyze_scan_uses_provider_factory(self):
-        """Verify analyze_scan() uses multi-provider chain."""
+        """Verify analyze_scan() builds the OpenAI provider."""
         from ai.AI_analyzer import analyze_scan
         
         scan_result = ScanResult(target_url="https://example.com")
@@ -80,7 +80,7 @@ class TestGeminiAnalyzerRefactoring:
             remediation="test"
         ))
         
-        with patch('ai.AI_analyzer.get_provider') as mock_get_provider:
+        with patch('ai.AI_analyzer.OpenAIProvider') as mock_openai:
             mock_provider = MagicMock(spec=AIProvider)
             mock_provider.name = "test-chain"
             mock_provider.complete.return_value = AIResponse(
@@ -88,12 +88,12 @@ class TestGeminiAnalyzerRefactoring:
                 model_used="test",
                 provider="test"
             )
-            mock_get_provider.return_value = mock_provider
+            mock_openai.return_value = mock_provider
             
             with patch('ai.AI_analyzer.ENABLE_AI_ANALYSIS', True):
                 result = analyze_scan(scan_result)
             
-            mock_get_provider.assert_called()
+            mock_openai.assert_called()
             assert isinstance(result, dict)
     
     def test_parse_ai_response_handles_markdown_fences(self):
@@ -267,58 +267,6 @@ class TestConcurrentScanning:
             assert isinstance(result, ScanResult)
             assert result.target_url == "https://example.com"
             assert len(result.pages_crawled) == 2
-
-
-# ──────────────────────────────────────────────────────────────────────────
-# Tests for provider abstraction (models updated)
-# ──────────────────────────────────────────────────────────────────────────
-
-class TestProviderAbstraction:
-    """Test that provider factory supports multiple AI backends."""
-    
-    def test_provider_factory_builds_gemini(self):
-        """Verify get_provider() can build Gemini provider."""
-        from ai.provider_factory import get_provider
-        
-        with patch.dict('os.environ', {
-            'AI_PROVIDER': 'gemini',
-            'GEMINI_API_KEY': 'test-key'
-        }):
-            with patch('ai.provider_factory._build_provider') as mock_build:
-                mock_provider = MagicMock(spec=AIProvider)
-                mock_provider.name = "gemini"
-                mock_build.return_value = mock_provider
-                
-                # This should work
-                try:
-                    result = get_provider()
-                except RuntimeError:
-                    # Expected if no providers configured in actual env
-                    pass
-    
-    def test_provider_fallback_chain(self):
-        """Test fallback chain when primary provider fails."""
-        from ai.provider_factory import get_provider, _FallbackChainProvider
-        
-        mock_primary = MagicMock(spec=AIProvider)
-        mock_primary.name = "primary"
-        mock_primary.complete.side_effect = ProviderError("Primary failed")
-        
-        mock_fallback = MagicMock(spec=AIProvider)
-        mock_fallback.name = "fallback"
-        mock_fallback.complete.return_value = AIResponse(
-            content="fallback response",
-            model_used="test",
-            provider="fallback"
-        )
-        
-        chain = _FallbackChainProvider([mock_primary, mock_fallback])
-        
-        # Should fall through to fallback
-        result = chain.complete("system", "user")
-        assert result.provider == "fallback"
-        assert mock_primary.complete.called
-        assert mock_fallback.complete.called
 
 
 # ──────────────────────────────────────────────────────────────────────────

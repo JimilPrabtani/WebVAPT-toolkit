@@ -93,10 +93,10 @@ def validate_config() -> None:
         key_name = key_map[provider]
         if not os.getenv(key_name, "").strip():
             print(f"[!] CONFIG ERROR: AI_PROVIDER={provider} but {key_name} is not set in .env.")
-            print(f"    → AI analysis will fail. Set {key_name}=your_key in .env.")
+            print(f"    -> AI analysis will fail. Set {key_name}=your_key in .env.")
     if not os.getenv("API_KEY", "").strip():
         print("[!] SECURITY WARNING: API_KEY is not set. The API is unprotected.")
-        print("    → Set API_KEY=$(openssl rand -hex 32) in .env for production.")
+        print("    -> Set API_KEY=$(openssl rand -hex 32) in .env for production.")
     if ALLOW_PRIVATE_TARGETS:
         print("[!] SECURITY WARNING: ALLOW_PRIVATE_TARGETS=true.")
-        print("    → The scanner can probe internal network ranges. Set ALLOW_PRIVATE_TARGETS=false on public servers.")
+        print("    -> The scanner can probe internal network ranges. Set ALLOW_PRIVATE_TARGETS=false on public servers.")

@@ -1,8 +1,8 @@
 """
 ai/providers/openai_provider.py
 ────────────────────────────────
-OpenAI adapter (GPT-5.3, GPT-4-turbo, etc.).
-Latest model: gpt-5.3 (multi-modal, fast, latest reasoning capabilities)
+OpenAI adapter (GPT-4o, GPT-4-turbo, etc.).
+Default model: gpt-4o — override per run with AI_MODEL (or OPENAI_MODEL) in .env.
 Also works as a base for any OpenAI-compatible endpoint (Groq, Together AI, Mistral).
 """
 
@@ -12,19 +12,30 @@ from ai.providers.base import AIProvider, AIResponse, ProviderError
 class OpenAIProvider(AIProvider):
     def __init__(
         self,
-        api_key  : str,
-        model    : str = "gpt-5.3",
-        base_url : str = None,   # Override for OpenAI-compatible endpoints
+        api_key  : str = None,
+        model    : str = None,
+        base_url : str = None,
     ):
         try:
             import openai as _openai
+            import os
         except ImportError:
             raise ImportError("Install openai: pip install openai")
+
+        # Dynamic defaults from .env for any endpoint / key / model
+        if api_key is None:
+            api_key = os.getenv("OPENAI_API_KEY", "")
+        if model is None:
+            model = (os.getenv("AI_MODEL", "") or os.getenv("OPENAI_MODEL", "") or "gpt-4o").strip()
+        if base_url is None:
+            base_url = os.getenv("CUSTOM_AI_BASE_URL", "").strip() or None
+        if not model:
+            model = "gpt-4o"
 
         self._model = model
         self._client = _openai.OpenAI(
             api_key  = api_key,
-            base_url = base_url,   # None = use official OpenAI endpoint
+            base_url = base_url,
         )
 
     @property

@@ -93,6 +93,12 @@ def init_db():
         )
     """)
 
+    # ── schema migration: add cve_ids column (safe if already present) ──
+    try:
+        cursor.execute("ALTER TABLE findings ADD COLUMN cve_ids TEXT")
+    except Exception:
+        pass  # column already exists in databases created before this version
+
     # ── indexes ───────────────────────────────────────────────────────────
     # These make common queries fast even with thousands of findings.
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_findings_scan_id ON findings(scan_id)")
@@ -167,8 +173,8 @@ def save_scan_results(scan_id: str, scan_result, exec_summary: dict):
         conn.execute("""
             INSERT INTO findings
                 (id, scan_id, vuln_type, severity, url, detail,
-                 evidence, remediation, ai_verified, cvss_score, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 evidence, remediation, ai_verified, cvss_score, cve_ids, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             str(uuid.uuid4()),
             scan_id,
@@ -180,6 +186,7 @@ def save_scan_results(scan_id: str, scan_result, exec_summary: dict):
             f.remediation,
             1 if f.ai_verified is True else (0 if f.ai_verified is False else None),
             f.cvss_score,
+            json.dumps(f.cve_ids or []),
             datetime.utcnow().isoformat(),
         ))
 
@@ -251,7 +258,7 @@ def get_scan_with_findings(scan_id: str) -> dict | None:
 def get_all_scans(limit: int = 50) -> list[dict]:
     """
     Return scan history — most recent first, no findings included.
-    Used by the /history endpoint and the Streamlit sidebar.
+    Used by the /history endpoint and the TUI history tab.
     """
     conn  = get_connection()
     rows  = conn.execute("""

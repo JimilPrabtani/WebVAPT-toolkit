@@ -26,8 +26,6 @@ import uuid
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from api.limiter import limiter, RATE_LIMITING_AVAILABLE
-
 from config import ALLOW_PRIVATE_TARGETS, is_ssrf_safe
 from api.database import (
     create_scan,
@@ -106,8 +104,7 @@ def _run_scan_task(scan_id: str, target_url: str, enable_ai: bool, max_pages: in
 )
 def start_scan(request: Request, scan_request: ScanRequest, background_tasks: BackgroundTasks):
     """
-    Start a new scan. Rate limited to 10 requests/minute/IP (requires slowapi).
-    The scan runs in the background — this endpoint returns in <1 second.
+    Start a new scan. The scan runs in the background — this endpoint returns in <1 second.
     """
     # ── SSRF guard ────────────────────────────────────────────────────────
     if not ALLOW_PRIVATE_TARGETS and not is_ssrf_safe(scan_request.target_url):

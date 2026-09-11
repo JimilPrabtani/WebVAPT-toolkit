@@ -1,3 +1,3 @@
-from ai.provider_factory import get_provider
+from ai.providers.openai_provider import OpenAIProvider
 
-__all__ = ["get_provider"]
+__all__ = ["OpenAIProvider"]
