@@ -1,16 +1,13 @@
 import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
 load_dotenv()
 
 from api.routes import router
-from api.terminal import router as terminal_router
 from api.database import init_db
 from config import validate_config
 
@@ -19,12 +16,6 @@ _API_KEY: str = os.getenv("API_KEY", "")
 
 # Paths that are always public (health check / root)
 _OPEN_PATHS = {"/"}
-
-# The web terminal is intentionally public like a local terminal session:
-# browsers cannot send the X-API-Key header on page loads, and each
-# connection only gets the TUI (never a shell). Do NOT expose this server
-# to a network without reverse-proxy authentication in front of it.
-_OPEN_PATHS |= {"/terminal", "/ws/terminal"}
 
 # Expose Swagger UI only when EXPOSE_DOCS=true (default: false for security)
 _EXPOSE_DOCS = os.getenv("EXPOSE_DOCS", "false").lower() == "true"
@@ -54,8 +45,7 @@ app = FastAPI(
 @app.middleware("http")
 async def api_key_middleware(request: Request, call_next):
     """Enforce API key authentication when API_KEY is configured in .env."""
-    if _API_KEY and request.url.path not in _OPEN_PATHS \
-            and not request.url.path.startswith("/static/"):
+    if _API_KEY and request.url.path not in _OPEN_PATHS:
         provided = request.headers.get("X-API-Key", "")
         if provided != _API_KEY:
             return JSONResponse(
@@ -65,19 +55,23 @@ async def api_key_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+def _cors_origins() -> list[str]:
+    """Origins allowed to call the API from a different URL (e.g. a hosted TUI).
+
+    The terminaltui TUI (Node, `npx webvapt-tui`) calls this API over HTTP
+    from *outside the browser*, so CORS is not enforced for it. Set
+    CORS_ORIGINS (comma-separated) only if a browser-hosted frontend is added.
+    """
+    raw = os.getenv("CORS_ORIGINS", "")
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+
 app.add_middleware(
     CORSMiddleware,
-    # No browser client ships with the project (the TUI and CLI call the
-    # scan engine in-process), so no cross-origin access is granted.
-    # Add an origin here only if you build a browser frontend for the API.
-    allow_origins  = [],
+    allow_origins  = _cors_origins(),
     # Explicit lists follow least-privilege — update if new endpoint methods are added.
     allow_methods  = ["GET", "POST", "DELETE"],
     allow_headers  = ["Content-Type", "X-API-Key"],
 )
 
 app.include_router(router, prefix="/api/v1", tags=["Scanning"])
-app.include_router(terminal_router, tags=["Web Terminal"])
-
-# Vendored xterm.js for /terminal — no CDN, works offline.
-app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "web" / "static")), name="static")

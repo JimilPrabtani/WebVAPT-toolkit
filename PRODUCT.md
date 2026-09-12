@@ -20,7 +20,7 @@ Single-command scan pipeline with built-in AI remediation (CVSS + fix code + exe
 
 ## Operating Context
 
-Terminal-first workflows (`python tui.py`, `python scan.py`), optional FastAPI server (`uvicorn main:app`) for automation. Local SQLite (`data/scans.db`), JSON/TXT reports (`data/reports/`). Authorized testing only.
+Terminal-first workflows: API server (`uvicorn main:app`) plus terminaltui TUI (`cd terminal-tui && npm run dev`) on a separate URL, and `python scan.py` for quick CLI scans. Local SQLite (`data/scans.db`), JSON/TXT reports (`data/reports/`). Authorized testing only.
 
 ## Capabilities and Constraints
 
@@ -39,6 +39,6 @@ Runnable code: `scanner/`, `ai/`, `api/database.py`, `reports/report_writer.py`,
 
 1. Easy over exhaustive: a beginner completes a scan without docs.
 2. Truth in terminal: findings, evidence, and risk are always inspectable as plain text.
-3. One pipeline, many surfaces: TUI reuses `run_scan()` directly, no parallel logic.
+3. One pipeline, many surfaces: TUI calls the same `run_scan()` engine through the API (`ScanRequest` seam), no parallel logic.
 4. Safe by default: SSRF guard and authorized-use warning are never hidden.
 5. Monochrome clarity: hierarchy from layout and weight, not hue.

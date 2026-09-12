@@ -1,0 +1,23 @@
+{
+  "name": "webvapt-tui",
+  "version": "1.0.0",
+  "description": "WebVAPT terminal UI (terminaltui) — thin client over the Python FastAPI scan engine",
+  "type": "module",
+  "bin": {
+    "webvapt-tui": "./dist/cli.js"
+  },
+  "scripts": {
+    "dev": "terminaltui dev",
+    "build": "terminaltui build",
+    "serve": "terminaltui serve --port 2222",
+    "test": "node --test \"tests/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "terminaltui": "^2.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.2",
+    "typescript": "^5.5.0"
+  }
+}

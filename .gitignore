@@ -32,10 +32,15 @@ data/*.sql
 
 # ── Test/coverage artifacts ───────────────────────────────────────────────
 .pytest_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 .tox/
 .nox/
+
+# ── Node (terminal-tui/) ────────────────────────────────────────────────
+node_modules/
+terminal-tui/dist/
 
 # ── IDE ───────────────────────────────────────────────────────────────────
 .vscode/

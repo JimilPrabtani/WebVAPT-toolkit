@@ -15,14 +15,12 @@ pydantic==2.7.1
 # ── AI Layer (single OpenAI-compatible provider) ──
 openai>=1.30.0          # OpenAI GPT-4o, and all OpenAI-compatible endpoints
 
-# ── TUI (black-and-white terminal: python tui.py) ───
-textual>=0.86
-
-# ── Web terminal (uvicorn main:app → open /terminal) ──
-pywinpty>=2.0.0; sys_platform=='win32'   # ConPTY backend that runs tui.py per browser session
+# ── Terminal UI (terminaltui, Node — see terminal-tui/) ──
+# The TUI is a Node app (`npx webvapt-tui`) that calls the FastAPI
+# scan engine over HTTP. No Python TUI dependencies remain.
 
 # ── Dev / Testing ─────────────────────────────────
 pytest>=8.4,<9
-pytest-asyncio>=1.4.0   # headless Textual Pilot tests (tests/test_tui.py)
+pytest-asyncio>=1.4.0
 ruff>=0.4.0             # linting
 bandit>=1.7.9           # SAST on this codebase itself
