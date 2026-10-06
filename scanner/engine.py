@@ -21,9 +21,10 @@ import time
 import hashlib
 from typing import List, Tuple, Optional, Callable, Dict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
+from bs4 import BeautifulSoup
 
-from scanner.fetcher        import fetch, crawl, _cache_clear
+from scanner.fetcher        import crawl, _cache_clear
 from scanner.models         import Finding, ScanResult
 from scanner.header_checks  import run_all_header_checks
 from scanner.xss_checks     import run_all_xss_checks
@@ -32,7 +33,12 @@ from scanner.misc_checks    import run_all_misc_checks
 from scanner.ssti_checks    import run_all_ssti_checks
 from scanner.secrets_checks import run_all_secrets_checks
 from scanner.tls_checks     import run_all_tls_checks
-from config                 import ENABLE_AI_ANALYSIS
+from scanner.form_checks    import run_all_form_checks, reset_stats as _forms_reset, submitted_count as _forms_submitted
+from scanner.traversal_checks import run_all_traversal_checks
+from scanner.llm_checks      import run_all_llm_checks
+from scanner.template_checks import run_all_template_checks
+from scanner.osv_checks      import run_all_osv_checks
+from config                 import ENABLE_AI_ANALYSIS, CRAWL_HARD_CAP, SCAN_WORKERS
 
 
 # ── Site-wide finding categories ───────────────────────────────────────────
@@ -48,6 +54,8 @@ SITE_WIDE_VULN_PREFIXES = (
     "TLS:",                     # TLS cert / protocol is per-host, not per-page
     "Insecure Transport:",      # HTTP vs HTTPS is a site-level issue
     "Information Disclosure:",  # Server version leaks are consistent site-wide
+    "Vulnerable Component:",    # A lib version is the same wherever it's referenced
+    "Exposed Model",            # A model name leak is identical on every page
 )
 
 
@@ -69,7 +77,7 @@ def _scan_page(
     Run ALL security check modules against a single page.
 
     This function runs in a worker thread (called by the ThreadPoolExecutor).
-    Each page gets all 7 check modules applied to it in sequence.
+    Each page gets all check modules applied to it in sequence.
 
     Args:
         url:         The page URL being scanned
@@ -83,33 +91,30 @@ def _scan_page(
     HOW TO ADD A NEW CHECK MODULE:
         1. Create scanner/my_new_checks.py with a run_all_my_new_checks() function
         2. Import it at the top of this file
-        3. Add: all_findings.extend(run_all_my_new_checks(url, response))
+        3. Add a lambda entry to the checks list below.
     """
-    all_findings = []
+    checks = [
+        lambda: run_all_header_checks(url, response),
+        lambda: run_all_xss_checks(url, response),
+        lambda: run_all_sqli_checks(url, response),
+        lambda: run_all_misc_checks(url, response, target_url),
+        lambda: run_all_ssti_checks(url, response),
+        lambda: run_all_secrets_checks(url, response),
+        lambda: run_all_form_checks(url, response),
+        lambda: run_all_traversal_checks(url, response),
+        lambda: run_all_llm_checks(url, response, target_url),
+        lambda: run_all_template_checks(url, response, target_url),
+        lambda: run_all_osv_checks(url, response),
+    ]
 
-    # ── Header checks (site-wide — will be deduped by hostname later) ──────
-    all_findings.extend(run_all_header_checks(url, response))
-
-    # ── XSS checks (per-page — URL params + DOM sinks) ─────────────────────
-    all_findings.extend(run_all_xss_checks(url, response))
-
-    # ── SQL injection checks (per-page — URL params + form surfaces) ────────
-    all_findings.extend(run_all_sqli_checks(url, response))
-
-    # ── Misc checks (HTTPS, open redirect, directory listing, sensitive paths)
-    all_findings.extend(run_all_misc_checks(url, response, target_url))
-
-    # ── SSTI checks (per-page — URL params injected with template payloads) ─
-    all_findings.extend(run_all_ssti_checks(url, response))
-
-    # ── Secrets checks (per-page — scans response body for leaked credentials)
-    all_findings.extend(run_all_secrets_checks(url, response))
-
-    # ── TLS checks (per-host — only runs once for the first page) ──────────
-    # The TLS cert and protocol are the same for all pages on the same host.
+    # TLS cert and protocol are the same for all pages on the same host.
     # Running this once prevents 20 identical "TLS 1.0 detected" findings.
     if not tls_checked:
-        all_findings.extend(run_all_tls_checks(url, response))
+        checks.append(lambda: run_all_tls_checks(url, response))
+
+    all_findings = []
+    for check in checks:
+        all_findings.extend(check())
 
     return all_findings
 
@@ -119,7 +124,7 @@ def run_scan(
     on_progress: Optional[Callable[[str], None]] = None,
     run_ai: Optional[bool] = None,
     max_pages: Optional[int] = None,
-    max_workers: int = 4,
+    max_workers: Optional[int] = None,
 ) -> Tuple[ScanResult, Dict]:
     """
     Run the full scan pipeline: crawl → scan → dedup → AI → summary.
@@ -133,7 +138,8 @@ def run_scan(
                       None  = use ENABLE_AI_ANALYSIS from .env
                       True  = force AI on
                       False = skip AI (useful for quick scans without API key)
-        max_pages:    Override MAX_PAGES_TO_CRAWL from .env (None = use config)
+        max_pages:    Override MAX_PAGES_TO_CRAWL from .env.
+                      None = use config default; 0 = entire site (CRAWL_HARD_CAP-bound).
         max_workers:  Number of concurrent scan threads (default: 4).
                       Increase for faster scanning, decrease to reduce load.
 
@@ -144,7 +150,7 @@ def run_scan(
 
     TROUBLESHOOTING:
       - "Could not reach target" → Check URL, firewall, ALLOW_PRIVATE_TARGETS in .env
-      - AI errors → Check AI_PROVIDER and matching API key in .env
+      - AI errors → Check OPENAI_API_KEY / CUSTOM_AI_BASE_URL / AI_MODEL in .env
       - Too many findings → Reduce MAX_PAGES_TO_CRAWL or use severity filter in dashboard
       - Too few findings → Increase MAX_PAGES_TO_CRAWL in .env
     """
@@ -158,21 +164,48 @@ def run_scan(
     # Clear the per-scan response cache so each scan starts fresh
     _cache_clear()
 
+    max_workers = max_workers if max_workers is not None else SCAN_WORKERS
     use_ai     = ENABLE_AI_ANALYSIS if run_ai is None else run_ai
     result     = ScanResult(target_url=target_url)
     start_time = time.time()
 
     # ── Step 1: Crawl ─────────────────────────────────────────────────────
     log(f"[*] Starting scan: {target_url}")
-    log(f"[*] Crawling site...")
+    log("[*] Crawling site...")
 
     pages = crawl(target_url, max_pages=max_pages)
     result.pages_crawled = [url for url, _ in pages]
     log(f"[*] Discovered {len(pages)} page(s)")
+    if max_pages is not None and max_pages <= 0 and len(pages) >= CRAWL_HARD_CAP:
+        log(f"[!] Crawl hit the hard cap ({CRAWL_HARD_CAP} pages). Raise CRAWL_HARD_CAP in .env to cover more.")
 
     if not pages:
         result.error = "Could not reach target. Check the URL and your connection."
         return result, {}
+
+    # ── Step 1b: Measure attack surface (scan coverage) ───────────────────
+    # Counts what will actually be tested, independent of what is found.
+    _params, _forms, _apis = 0, 0, 0
+    for _page_url, _resp in pages:
+        try:
+            _params += len(parse_qs(urlparse(_page_url).query))
+            _ctype = _resp.headers.get("Content-Type", "")
+            if not isinstance(_ctype, str):
+                _ctype = ""
+            if "text/html" not in _ctype:
+                _apis += 1
+                continue
+            _forms += len(BeautifulSoup(_resp.text, "html.parser").find_all("form"))
+        except Exception:
+            continue
+    _forms_reset()  # zero the per-scan form-submission counter
+    result.coverage = {
+        "pages_crawled":        len(pages),
+        "params_tested":        _params,
+        "forms_found":          _forms,
+        "api_endpoints_probed": _apis,
+    }
+    log(f"[*] Attack surface: {_params} URL param(s), {_forms} form(s), {_apis} API endpoint(s)")
 
     # ── Step 2: Concurrent scanning  ──────────────────────────────────────
     # Each page is scanned in a separate thread for speed.
@@ -236,22 +269,49 @@ def run_scan(
                 log(f"[!] Error scanning {url}: {e}")
 
     result.scan_duration = time.time() - start_time
+    result.coverage["forms_submitted"] = _forms_submitted()
 
     # ── Step 3: AI Analysis ────────────────────────────────────────────────
     # Sends HIGH/CRITICAL/MEDIUM findings to the configured AI provider.
     # AI adds CVSS score, attack scenario, and detailed fix instructions.
+    # When AI is off or fails, fall back to the deterministic heuristic so
+    # the report still carries a risk score + executive summary.
     exec_summary = {}
     if use_ai:
-        from ai.AI_analyzer import analyze_scan
+        from ai.AI_analyzer import analyze_scan, get_last_ai_error
         exec_summary = analyze_scan(result, on_progress=on_progress)
+        if not exec_summary:
+            log("[*] AI analysis failed — using heuristic risk score instead")
+            exec_summary = result.heuristic_summary()
+        # Surface WHY findings lack AI verification (bad model/key/endpoint).
+        ai_error = get_last_ai_error()
+        if ai_error:
+            log(f"[!] {ai_error}")
+            exec_summary["ai_error"] = ai_error
     else:
         log("[*] AI analysis skipped (disabled in config or --no-ai flag used)")
+        exec_summary = result.heuristic_summary()
 
-    # ── Step 4: Final summary ─────────────────────────────────────────────
+    # ── Step 3b: Static prevention guidance ────────────────────────────────
+    # Findings the AI didn't enrich (or AI off) still teach future-proofing:
+    # append the category's systemic prevention note unless one is present.
+    from scanner.models import prevention_for as _prevention_for
+    for _f in result.findings:
+        if "PREVENTION" not in (_f.remediation or ""):
+            _prev = _prevention_for(_f.vuln_type)
+            if _prev:
+                _f.remediation = ((_f.remediation + "\n\n") if _f.remediation else "") + (
+                    f"PREVENTION (STOP IT RECURRING):\n{_prev}"
+                )
     s = result.summary()
     log(f"\n{'='*50}")
     log(f"SCAN COMPLETE: {s['target']}")
     log(f"  Pages   : {s['pages_crawled']}")
+    log(f"  Tested  : {s['coverage'].get('params_tested', 0)} param(s), "
+        f"{s['coverage'].get('forms_submitted', 0)} form submission(s), "
+        f"{s['coverage'].get('api_endpoints_probed', 0)} API endpoint(s)")
+    log(f"  Risk    : {exec_summary.get('overall_risk', '?')} "
+        f"({exec_summary.get('risk_score', '?')}/100)")
     log(f"  Findings: {s['total_findings']} total")
     for sev, count in s["by_severity"].items():
         if count:

@@ -2,7 +2,7 @@
 tests/test_refactored.py
 
 Comprehensive test suite for refactored components:
-  1. gemini_analyzer.py refactoring (provider_factory integration)
+  1. AI analyzer refactoring (single OpenAI-compatible provider)
   2. fetcher.py caching mechanism
   3. engine.py concurrent scanning
   4. Type hints validation
@@ -12,15 +12,15 @@ Comprehensive test suite for refactored components:
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 from scanner.models import Finding, ScanResult
-from ai.providers.base import AIProvider, AIResponse, ProviderError
+from ai.providers.base import AIProvider, AIResponse
 import requests
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# Tests for gemini_analyzer.py refactoring (provider_factory integration)
+# Tests for AI analyzer refactoring (single OpenAI-compatible provider)
 # ──────────────────────────────────────────────────────────────────────────
 
-class TestGeminiAnalyzerRefactoring:
+class TestAIAnalyzerRefactoring:
     """Test that the analyzer uses the OpenAI provider correctly."""
     
     def test_analyze_scan_uses_batched_approach(self):
@@ -66,7 +66,7 @@ class TestGeminiAnalyzerRefactoring:
             )
             assert isinstance(result, dict)
     
-    def test_analyze_scan_uses_provider_factory(self):
+    def test_analyze_scan_builds_openai_provider(self):
         """Verify analyze_scan() builds the OpenAI provider."""
         from ai.AI_analyzer import analyze_scan
         
@@ -130,7 +130,7 @@ class TestFetcherCaching:
         _cache_clear()  # Start fresh
         
         # Mock requests.get and SSRF check (DNS not available in test env)
-        with patch('scanner.fetcher.requests.get') as mock_get, \
+        with patch('scanner.fetcher._session.get') as mock_get, \
              patch('scanner.fetcher._is_resolved_ip_safe', return_value=True):
             mock_response = Mock(spec=requests.Response)
             mock_response.text = "<html>test</html>"
@@ -154,7 +154,7 @@ class TestFetcherCaching:
         """Test that _cache_clear() resets the cache for new scans."""
         from scanner.fetcher import fetch, _cache_clear
         
-        with patch('scanner.fetcher.requests.get') as mock_get, \
+        with patch('scanner.fetcher._session.get') as mock_get, \
              patch('scanner.fetcher._is_resolved_ip_safe', return_value=True):
             mock_response = Mock(spec=requests.Response)
             mock_response.text = "<html>test</html>"
@@ -178,7 +178,7 @@ class TestFetcherCaching:
         
         _cache_clear()
         
-        with patch('scanner.fetcher.requests.get') as mock_get, \
+        with patch('scanner.fetcher._session.get') as mock_get, \
              patch('scanner.fetcher._is_resolved_ip_safe', return_value=True):
             mock_response = Mock(spec=requests.Response)
             mock_response.text = "<html>test</html>"
@@ -214,9 +214,14 @@ class TestConcurrentScanning:
              patch('scanner.engine.run_all_xss_checks', return_value=[]) as mock_xss, \
              patch('scanner.engine.run_all_sqli_checks', return_value=[]) as mock_sql, \
              patch('scanner.engine.run_all_misc_checks', return_value=[]) as mock_misc, \
-             patch('scanner.engine.run_all_ssti_checks', return_value=[]) as mock_ssti, \
-             patch('scanner.engine.run_all_secrets_checks', return_value=[]) as mock_secrets, \
-             patch('scanner.engine.run_all_tls_checks', return_value=[]) as mock_tls:
+              patch('scanner.engine.run_all_ssti_checks', return_value=[]) as mock_ssti, \
+              patch('scanner.engine.run_all_secrets_checks', return_value=[]) as mock_secrets, \
+              patch('scanner.engine.run_all_form_checks', return_value=[]) as mock_forms, \
+              patch('scanner.engine.run_all_traversal_checks', return_value=[]) as mock_trav, \
+              patch('scanner.engine.run_all_llm_checks', return_value=[]) as mock_llm, \
+              patch('scanner.engine.run_all_template_checks', return_value=[]) as mock_tmpl, \
+              patch('scanner.engine.run_all_osv_checks', return_value=[]) as mock_osv, \
+              patch('scanner.engine.run_all_tls_checks', return_value=[]) as mock_tls:
             
             findings = _scan_page(url, mock_response, url, tls_checked=False)
             
@@ -227,6 +232,11 @@ class TestConcurrentScanning:
             mock_misc.assert_called_once()
             mock_ssti.assert_called_once()
             mock_secrets.assert_called_once()
+            mock_forms.assert_called_once()
+            mock_trav.assert_called_once()
+            mock_llm.assert_called_once()
+            mock_tmpl.assert_called_once()
+            mock_osv.assert_called_once()
             mock_tls.assert_called_once()  # TLS called when tls_checked=False
     
     def test_scan_page_skips_tls_when_already_checked(self):
@@ -241,6 +251,11 @@ class TestConcurrentScanning:
              patch('scanner.engine.run_all_sqli_checks', return_value=[]), \
              patch('scanner.engine.run_all_misc_checks', return_value=[]), \
              patch('scanner.engine.run_all_ssti_checks', return_value=[]), \
+             patch('scanner.engine.run_all_form_checks', return_value=[]), \
+             patch('scanner.engine.run_all_traversal_checks', return_value=[]), \
+             patch('scanner.engine.run_all_llm_checks', return_value=[]), \
+             patch('scanner.engine.run_all_template_checks', return_value=[]), \
+             patch('scanner.engine.run_all_osv_checks', return_value=[]), \
              patch('scanner.engine.run_all_secrets_checks', return_value=[]):
             
             _scan_page("https://example.com", mock_response, "https://example.com", tls_checked=True)
@@ -306,6 +321,450 @@ class TestIntegration:
             
             assert len(result.pages_crawled) == 2
             assert result.scan_duration >= 0
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Tests for the advanced engine: categories, heuristic risk, form checks,
+# traversal checks, time-based SQLi, fetcher retry
+# ──────────────────────────────────────────────────────────────────────────
+
+class TestResultComprehensiveness:
+    """Category mapping, OWASP fallback, heuristic risk, rich summary."""
+
+    def test_finding_category_mapping(self):
+        from scanner.models import finding_category
+        assert finding_category("SQL Injection (Error-Based)") == "Injection (SQLi)"
+        assert finding_category("Cross-Site Scripting (Reflected XSS)") == "Cross-Site Scripting (XSS)"
+        assert finding_category("Missing Header: X-Frame-Options") == "Security Misconfiguration"
+        assert finding_category("Missing CSRF Token on Form") == "Broken Access Control"
+        assert finding_category("Something Entirely New") == "Other"
+
+    def test_finding_owasp_fallback_and_override(self):
+        from scanner.models import finding_owasp
+        assert finding_owasp("SQL Injection (Error-Based)") == "A03:2021"
+        assert finding_owasp("Open Redirect") == "A01:2021"
+        assert finding_owasp("Something Entirely New") == "Unmapped"
+        # Explicit AI value always wins over the fallback
+        assert finding_owasp("Open Redirect", "A05:2021") == "A05:2021"
+
+    def test_heuristic_risk_bands(self):
+        from scanner.models import heuristic_risk
+        assert heuristic_risk({}) == (0, "LOW")
+        assert heuristic_risk({"CRITICAL": 1}) == (25, "CRITICAL")
+        assert heuristic_risk({"HIGH": 2}) == (20, "HIGH")
+        assert heuristic_risk({"CRITICAL": 5, "HIGH": 5, "MEDIUM": 5}) == (100, "CRITICAL")
+
+    def test_summary_carries_category_owasp_urls_coverage(self):
+        result = ScanResult(target_url="https://example.com")
+        result.coverage = {"params_tested": 3, "forms_found": 1}
+        result.add(Finding(
+            vuln_type="SQL Injection (Error-Based)", severity="CRITICAL",
+            url="https://example.com/s?q=1", detail="d", evidence="e",
+            remediation="r",
+        ))
+        result.add(Finding(
+            vuln_type="Missing Header: X-Frame-Options", severity="MEDIUM",
+            url="example.com", detail="d", evidence="e", remediation="r",
+        ))
+        s = result.summary()
+        assert s["by_category"] == {"Injection (SQLi)": 1, "Security Misconfiguration": 1}
+        assert s["by_owasp"] == {"A03:2021": 1, "A05:2021": 1}
+        assert s["top_urls"][0] == {"url": "https://example.com/s?q=1", "findings": 1}
+        assert s["coverage"]["params_tested"] == 3
+
+    def test_heuristic_summary_shape(self):
+        result = ScanResult(target_url="https://example.com")
+        result.add(Finding(
+            vuln_type="SQL Injection (Error-Based)", severity="CRITICAL",
+            url="https://example.com/s?q=1", detail="d", evidence="e",
+            remediation="r",
+        ))
+        h = result.heuristic_summary()
+        assert h["overall_risk"] == "CRITICAL"
+        assert h["risk_score"] == 25
+        assert h["source"] == "heuristic"
+        assert h["key_risks"] and h["immediate_actions"]
+        assert "executive_summary" in h
+
+
+class TestTraversalChecks:
+    """Path traversal confirmation requires real file markers."""
+
+    def _resp(self, text):
+        r = Mock(spec=requests.Response)
+        r.text = text
+        return r
+
+    def test_confirms_unix_passwd_read(self):
+        from scanner.traversal_checks import check_path_traversal
+        with patch('scanner.traversal_checks._session') as sess:
+            sess.get.return_value = self._resp("root:x:0:0: daemon...")
+            findings = check_path_traversal("https://example.com/view?file=x")
+        assert len(findings) == 1
+        assert findings[0].severity == "HIGH"
+        assert "Traversal" in findings[0].vuln_type
+
+    def test_no_marker_no_finding(self):
+        from scanner.traversal_checks import check_path_traversal
+        with patch('scanner.traversal_checks._session') as sess:
+            sess.get.return_value = self._resp("<html>not found</html>")
+            findings = check_path_traversal("https://example.com/view?file=x")
+        assert findings == []
+
+    def test_skips_urls_without_params(self):
+        from scanner.traversal_checks import check_path_traversal
+        with patch('scanner.traversal_checks._session') as sess:
+            assert check_path_traversal("https://example.com/about") == []
+            sess.get.assert_not_called()
+
+
+class TestTimeBasedSqli:
+    """Time-based blind SQLi uses the dual delay threshold."""
+
+    def _resp(self):
+        r = Mock(spec=requests.Response)
+        r.text = "<html>same content</html>"
+        return r
+
+    def test_confirms_sleep_delay(self):
+        from scanner.sqli_checks import check_time_based_sqli
+        with patch('scanner.sqli_checks._timed_get') as timed:
+            # baseline fast, first payload slow → confirmed, second payload skipped
+            timed.side_effect = [(self._resp(), 0.2), (self._resp(), 3.4)]
+            findings = check_time_based_sqli("https://example.com/s?q=1")
+        assert len(findings) == 1
+        assert findings[0].severity == "CRITICAL"
+        assert "Time-Based" in findings[0].vuln_type
+
+    def test_fast_responses_are_clean(self):
+        from scanner.sqli_checks import check_time_based_sqli
+        with patch('scanner.sqli_checks._timed_get') as timed:
+            timed.side_effect = [(self._resp(), 0.2), (self._resp(), 0.25), (self._resp(), 0.3)]
+            assert check_time_based_sqli("https://example.com/s?q=1") == []
+
+
+class TestFormChecks:
+    """Active form submission + CSRF token detection."""
+
+    def _page(self, html):
+        r = Mock(spec=requests.Response)
+        r.text = html
+        return r
+
+    def test_get_form_reflection_confirmed(self):
+        from scanner.form_checks import check_form_injection
+        html = ('<html><form action="/search" method="GET">'
+                '<input type="text" name="q"><input type="submit"></form></html>')
+        with patch('scanner.form_checks._session') as sess:
+            r = self._page("results for xssprobe7x9 \"><svg onload=alert(xssprobe7x9)>")
+            sess.get.return_value = r
+            findings = check_form_injection("https://example.com/", self._page(html))
+        assert len(findings) == 1
+        assert findings[0].severity == "HIGH"
+        assert "Form" in findings[0].vuln_type
+
+    def test_post_form_without_csrf_flagged(self):
+        from scanner.form_checks import check_form_csrf
+        html = ('<html><form action="/profile" method="POST">'
+                '<input type="text" name="email"></form></html>')
+        findings = check_form_csrf("https://example.com/", self._page(html))
+        assert len(findings) == 1
+        assert findings[0].severity == "MEDIUM"
+
+    def test_post_form_with_csrf_token_passes(self):
+        from scanner.form_checks import check_form_csrf
+        html = ('<html><form action="/profile" method="POST">'
+                '<input type="hidden" name="csrf_token" value="abc">'
+                '<input type="text" name="email"></form></html>')
+        assert check_form_csrf("https://example.com/", self._page(html)) == []
+
+
+class TestFetcherRetry:
+    """Transient fetch failures get exactly one retry."""
+
+    def test_retry_then_success(self):
+        from scanner.fetcher import fetch, _cache_clear
+        _cache_clear()
+        with patch('scanner.fetcher._session.get') as mock_get, \
+             patch('scanner.fetcher._is_resolved_ip_safe', return_value=True):
+            ok = Mock(spec=requests.Response)
+            ok.text = "<html>ok</html>"
+            ok.headers = {"Content-Type": "text/html"}
+            mock_get.side_effect = [requests.exceptions.ConnectionError("reset"), ok]
+            assert fetch("https://example.com/r", _use_cache=False) is ok
+            assert mock_get.call_count == 2
+
+    def test_gives_up_after_second_failure(self):
+        from scanner.fetcher import fetch, _cache_clear
+        _cache_clear()
+        with patch('scanner.fetcher._session.get') as mock_get, \
+             patch('scanner.fetcher._is_resolved_ip_safe', return_value=True):
+            mock_get.side_effect = requests.exceptions.Timeout("slow")
+            assert fetch("https://example.com/t", _use_cache=False) is None
+            assert mock_get.call_count == 2
+
+
+class TestHeuristicFallback:
+    """run_scan without AI still returns a complete executive summary."""
+
+    def test_no_ai_gives_heuristic_summary(self):
+        from scanner.engine import run_scan
+        pages = [("https://example.com/?q=1", Mock(spec=requests.Response))]
+        with patch('scanner.engine.crawl', return_value=pages), \
+             patch('scanner.engine._scan_page', return_value=[]), \
+             patch('scanner.engine._cache_clear'), \
+             patch('scanner.engine.ENABLE_AI_ANALYSIS', False):
+            result, summary = run_scan("https://example.com", max_workers=1)
+            assert summary["source"] == "heuristic"
+            assert summary["risk_score"] == 0
+            assert result.coverage["params_tested"] == 1
+
+
+class TestAiFailureSurfacing:
+    """AI provider failures must be recorded, not silently swallowed."""
+
+    def _result_with_high(self):
+        result = ScanResult(target_url="https://example.com")
+        result.add(Finding(
+            vuln_type="SQL Injection (Error-Based)", severity="HIGH",
+            url="https://example.com/s?q=1", detail="d", evidence="e",
+            remediation="r",
+        ))
+        return result
+
+    def test_batch_provider_error_records_reason(self):
+        from ai.AI_analyzer import analyze_scan, get_last_ai_error
+        from ai.providers.base import ProviderError
+        with patch('ai.AI_analyzer.OpenAIProvider') as mock_openai:
+            mock_provider = MagicMock(spec=AIProvider)
+            mock_provider.complete.side_effect = ProviderError("Error code: 404 - bad model")
+            mock_openai.return_value = mock_provider
+            with patch('ai.AI_analyzer.ENABLE_AI_ANALYSIS', True):
+                result = self._result_with_high()
+                summary = analyze_scan(result)
+            assert summary == {}
+            assert "404" in get_last_ai_error()
+            assert result.findings[0].ai_verified is False
+
+    def test_engine_attaches_ai_error_to_heuristic_summary(self):
+        from scanner.engine import run_scan
+        pages = [("https://example.com/?q=1", Mock(spec=requests.Response))]
+        with patch('scanner.engine.crawl', return_value=pages), \
+             patch('scanner.engine._scan_page', return_value=[]), \
+             patch('scanner.engine._cache_clear'), \
+             patch('ai.AI_analyzer.analyze_scan', return_value={}), \
+             patch('ai.AI_analyzer.get_last_ai_error', return_value="Batch analysis failed: 404"):
+            _, summary = run_scan("https://example.com", run_ai=True, max_workers=1)
+            assert summary["source"] == "heuristic"
+            assert summary["ai_error"] == "Batch analysis failed: 404"
+
+
+class TestModelFallbackChain:
+    """AI_MODEL comma list: dead/rate-limited models are skipped, auth fails fast."""
+
+    def _provider(self, models):
+        from ai.providers.openai_provider import OpenAIProvider
+        p = OpenAIProvider(model=models, api_key="test-key")
+        p._client = MagicMock()
+        return p
+
+    def _ok(self, content='{"ok": true}'):
+        r = MagicMock()
+        r.choices = [MagicMock()]
+        r.choices[0].message.content = content
+        return r
+
+    def test_models_parsed_in_priority_order(self):
+        p = self._provider("dead-model, alive-model ,")
+        assert p._models == ["dead-model", "alive-model"]
+        assert p._model == "dead-model"
+
+    def test_fails_over_on_404(self):
+        p = self._provider("dead-model,alive-model")
+        create = p._client.chat.completions.create
+        create.side_effect = [Exception("Error code: 404 - not found"), self._ok()]
+        out = p.complete("sys", "hi")
+        assert out.content == '{"ok": true}'
+        assert out.model_used == "alive-model"
+        assert create.call_count == 2
+        assert create.call_args[1]["model"] == "alive-model"
+
+    def test_auth_error_fails_fast_without_retry(self):
+        from ai.providers.base import ProviderError
+        p = self._provider("m1,m2")
+        create = p._client.chat.completions.create
+        create.side_effect = Exception("Error code: 401 - invalid_api_key")
+        with pytest.raises(ProviderError):
+            p.complete("sys", "hi")
+        assert create.call_count == 1
+
+    def test_all_models_failing_reports_every_model(self):
+        from ai.providers.base import ProviderError
+        p = self._provider("m1,m2")
+        p._client.chat.completions.create.side_effect = Exception("Error code: 429 - slow down")
+        with pytest.raises(ProviderError) as exc:
+            p.complete("sys", "hi")
+        assert "m1" in str(exc.value) and "m2" in str(exc.value)
+
+
+class TestAttackChainsAndPrevention:
+    """Evidenced exploitation chains + systemic prevention guidance."""
+
+    def _f(self, vuln_type, severity="HIGH", url="https://example.com/"):
+        return Finding(vuln_type=vuln_type, severity=severity, url=url,
+                       detail="d", evidence="e", remediation="r")
+
+    def test_xss_cookie_chain_links_real_findings(self):
+        from scanner.models import build_attack_chains
+        findings = [
+            self._f("Cross-Site Scripting (Reflected XSS)", "HIGH", "https://example.com/s?q=1"),
+            self._f("Insecure Cookie: Missing HttpOnly", "MEDIUM", "https://example.com/"),
+        ]
+        chains = build_attack_chains(findings)
+        assert len(chains) == 1
+        assert chains[0]["title"] == "XSS Session Hijack"
+        assert chains[0]["severity"] == "HIGH"
+        assert "https://example.com/s?q=1" in chains[0]["narrative"]
+
+    def test_no_links_no_chains(self):
+        from scanner.models import build_attack_chains
+        assert build_attack_chains([self._f("Directory Listing Enabled", "MEDIUM")]) == []
+
+    def test_chains_ordered_by_severity_and_capped(self):
+        from scanner.models import build_attack_chains
+        findings = [
+            self._f("Open Redirect", "HIGH"),
+            self._f("Missing CSRF Token on Form", "MEDIUM"),
+            self._f("SQL Injection (Error-Based)", "CRITICAL"),
+            self._f("JWT Algorithm:None Bypass", "CRITICAL"),
+        ]
+        chains = build_attack_chains(findings)
+        assert chains[0]["severity"] == "CRITICAL"
+        assert len(chains) <= 5
+
+    def test_prevention_guidance_per_category(self):
+        from scanner.models import prevention_for
+        assert "parameterized" in prevention_for("SQL Injection (Error-Based)").lower()
+        assert prevention_for("Something Entirely New") == ""
+
+
+class TestLlmChecks:
+    """LLM surface detection with explicit LLM Top 10 ids."""
+
+    def _resp(self, text):
+        r = Mock(spec=requests.Response)
+        r.text = text
+        r.headers = {"Content-Type": "text/html"}
+        return r
+
+    def test_model_name_leak_flagged(self):
+        from scanner.llm_checks import check_model_disclosure
+        f = check_model_disclosure("https://x/", self._resp("var m='gpt-4o-mini';"))
+        assert len(f) == 1 and f[0].owasp_id == "LLM10:2025" and f[0].severity == "INFO"
+
+    def test_llm_api_key_is_critical(self):
+        from scanner.llm_checks import check_llm_keys
+        f = check_llm_keys("https://x/", self._resp('key="sk-ant-abc123XYZ456"'))
+        assert len(f) == 1 and f[0].severity == "CRITICAL" and f[0].owasp_id == "LLM02:2025"
+
+    def test_open_chat_endpoint_is_high(self):
+        from scanner.llm_checks import check_llm_endpoints
+        r = self._resp('{"object":"list","data":[{"id":"m","object":"model"}]}')
+        r.status_code = 200
+        with patch('scanner.llm_checks._session') as sess:
+            sess.get.return_value = r
+            findings = check_llm_endpoints("https://x/")
+        assert any("Chat Endpoint" in f.vuln_type and f.severity == "HIGH" for f in findings)
+
+    def test_catchall_without_markers_ignored(self):
+        from scanner.llm_checks import check_llm_endpoints
+        r = self._resp("<html><div id=root></div></html>")
+        r.status_code = 200
+        with patch('scanner.llm_checks._session') as sess:
+            sess.get.return_value = r
+            assert check_llm_endpoints("https://x/") == []
+
+    def test_chat_form_surface_flagged(self):
+        from scanner.llm_checks import check_prompt_injection_surface
+        html = ('<html><form action="/api/chat" method="POST">'
+                '<textarea name="prompt"></textarea></form></html>')
+        f = check_prompt_injection_surface("https://x/", self._resp(html))
+        assert len(f) == 1 and f[0].owasp_id == "LLM01:2025"
+
+
+class TestTemplateChecks:
+    """Declarative JSON templates fire without code changes."""
+
+    def test_git_config_template_matches(self):
+        from scanner.template_checks import check_templates
+        def fake_get(url, **kw):
+            r = Mock(spec=requests.Response)
+            if url.endswith("/.git/config"):
+                r.status_code = 200
+                r.text = "[core]\n\trepositoryformatversion = 0\n"
+                r.content = r.text.encode()
+                r.headers = {"Content-Type": "text/plain"}
+            else:
+                r.status_code = 404
+                r.text = "not found"
+                r.content = b"not found"
+                r.headers = {"Content-Type": "text/html"}
+            return r
+        with patch('scanner.template_checks._session') as sess:
+            sess.get.side_effect = fake_get
+            findings = check_templates("https://example.com/")
+        hit = [f for f in findings if f.vuln_type == "Sensitive Path Exposure: /.git/config"]
+        assert len(hit) == 1 and hit[0].severity == "HIGH"
+        assert hit[0].owasp_id == "A05:2021"
+
+    def test_templates_skipped_off_base_url(self):
+        from scanner.template_checks import run_all_template_checks
+        r = Mock(spec=requests.Response)
+        assert run_all_template_checks("https://x/page", r, "https://x/") == []
+
+
+class TestOsvChecks:
+    """JS library versions resolved against OSV records."""
+
+    def test_extracts_lib_versions(self):
+        from scanner.osv_checks import _extract_libs
+        html = ('<html><script src="/js/jquery-3.4.1.min.js"></script>'
+                '<script src="https://cdn/x/bootstrap@5.3.2/dist.js"></script></html>')
+        assert ("jquery", "3.4.1") in _extract_libs("https://x/", html)
+        assert ("bootstrap", "5.3.2") in _extract_libs("https://x/", html)
+
+    def test_vulnerable_lib_flagged_with_cves(self):
+        from scanner.osv_checks import check_js_libraries
+        html = '<html><script src="/js/jquery-3.4.1.min.js"></script></html>'
+        r = Mock(spec=requests.Response)
+        r.text = html
+        r.headers = {"Content-Type": "text/html"}
+        osv_resp = Mock()
+        osv_resp.status_code = 200
+        osv_resp.json.return_value = {"vulns": [{
+            "id": "GHSA-jquery-xss", "summary": "XSS in jQuery",
+            "aliases": ["CVE-2020-11022"],
+            "database_specific": {"severity": "high"},
+            "severity": [{"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"}],
+        }]}
+        with patch('scanner.osv_checks.requests.post', return_value=osv_resp):
+            findings = check_js_libraries("https://x/", r)
+        assert len(findings) == 1
+        assert findings[0].severity == "HIGH"
+        assert "CVE-2020-11022" in findings[0].cve_ids
+        assert findings[0].owasp_id == "A06:2021"
+
+    def test_offline_osv_is_silent_skip(self):
+        from scanner import osv_checks
+        from scanner.osv_checks import check_js_libraries
+        osv_checks._osv_cache.clear()
+        html = '<html><script src="/js/jquery-3.4.1.min.js"></script></html>'
+        r = Mock(spec=requests.Response)
+        r.text = html
+        r.headers = {"Content-Type": "text/html"}
+        with patch('scanner.osv_checks.requests.post',
+                   side_effect=requests.exceptions.ConnectionError):
+            assert check_js_libraries("https://x/", r) == []
 
 
 if __name__ == "__main__":

@@ -11,10 +11,11 @@ WHAT IS SQL INJECTION?
     - Delete or modify data
     - In some cases, execute OS commands on the server
 
-THREE DETECTION METHODS:
+FOUR DETECTION METHODS:
   1. Error-based  — inject SQL metacharacters, look for database error messages
   2. Boolean-blind — compare responses: TRUE condition ≈ baseline, FALSE condition ≠ baseline
-  3. Form surface — flag forms with text inputs as SQLi attack surface (INFO level)
+  3. Time-based blind — inject SLEEP()/pg_sleep(), measure response delay
+  4. Form surface — flag forms with text inputs as SQLi attack surface (INFO level)
 
 REFERENCES:
   - OWASP A03:2021 — Injection (https://owasp.org/Top10/A03_2021-Injection/)
@@ -28,11 +29,13 @@ HOW TO ADD NEW DB ERROR PATTERNS:
 
 from typing import List, Optional
 import re
+import time
 import requests
 from urllib.parse import urlparse, parse_qs, urlencode, urljoin
 from bs4 import BeautifulSoup
 from scanner.models import Finding
-from config import DEFAULT_HEADERS, SCAN_TIMEOUT, ALLOW_INSECURE_TLS
+from scanner.fetcher import _session
+from config import SCAN_TIMEOUT, ALLOW_INSECURE_TLS
 
 _TLS_VERIFY = not ALLOW_INSECURE_TLS
 
@@ -133,9 +136,8 @@ def check_error_based_sqli(url: str) -> List[Finding]:
             test_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}?{urlencode(test_params)}"
 
             try:
-                resp = requests.get(
+                resp = _session.get(
                     test_url,
-                    headers=DEFAULT_HEADERS,
                     timeout=SCAN_TIMEOUT,
                     verify=_TLS_VERIFY,
                     allow_redirects=True,
@@ -238,21 +240,21 @@ def check_boolean_sqli(url: str) -> List[Finding]:
             # ── Fetch baseline (original param value) ─────────────────────
             base_params = {k: v[0] for k, v in params.items()}
             base_url    = f"{parsed.scheme}://{parsed.netloc}{parsed.path}?{urlencode(base_params)}"
-            base_resp   = requests.get(base_url, headers=DEFAULT_HEADERS,
-                                       timeout=SCAN_TIMEOUT, verify=_TLS_VERIFY)
+            base_resp   = _session.get(base_url,
+                                        timeout=SCAN_TIMEOUT, verify=_TLS_VERIFY)
 
             # ── TRUE condition (should return same content as baseline) ────
             true_params                = {**base_params}
             true_params[param_name]    = original_val + "' AND '1'='1"
             true_url                   = f"{parsed.scheme}://{parsed.netloc}{parsed.path}?{urlencode(true_params)}"
-            true_resp                  = requests.get(true_url, headers=DEFAULT_HEADERS,
+            true_resp                  = _session.get(true_url,
                                                       timeout=SCAN_TIMEOUT, verify=_TLS_VERIFY)
 
             # ── FALSE condition (should return different/empty content) ────
             false_params               = {**base_params}
             false_params[param_name]   = original_val + "' AND '1'='2"
             false_url                  = f"{parsed.scheme}://{parsed.netloc}{parsed.path}?{urlencode(false_params)}"
-            false_resp                 = requests.get(false_url, headers=DEFAULT_HEADERS,
+            false_resp                 = _session.get(false_url,
                                                       timeout=SCAN_TIMEOUT, verify=_TLS_VERIFY)
 
             # ── Compare normalized lengths ─────────────────────────────────
@@ -299,7 +301,91 @@ def check_boolean_sqli(url: str) -> List[Finding]:
     return findings
 
 
-# ── 3. Form-based injection surface ──────────────────────────────────────
+# ── 3. Time-based blind SQLi ─────────────────────────────────────────────
+
+# Payloads that force the database to pause before responding.
+# Only a real SQL execution path produces a multi-second delay, so a slow
+# response here is strong evidence even when errors are suppressed and
+# TRUE/FALSE content comparison is inconclusive.
+TIME_SLEEP_SECONDS = 3
+TIME_PROBES = [
+    ("' AND SLEEP(3)-- -",       "MySQL / MariaDB"),
+    ("'; SELECT pg_sleep(3)--",  "PostgreSQL"),
+]
+
+
+def _timed_get(url: str) -> tuple[object | None, float]:
+    """GET a URL, returning (response_or_None, elapsed_seconds)."""
+    start = time.monotonic()
+    try:
+        resp = _session.get(url, timeout=SCAN_TIMEOUT + TIME_SLEEP_SECONDS + 5, verify=_TLS_VERIFY)
+        return resp, time.monotonic() - start
+    except requests.RequestException:
+        return None, time.monotonic() - start
+
+
+def check_time_based_sqli(url: str) -> List[Finding]:
+    """
+    Detect blind SQL injection via database sleep functions.
+
+    STRATEGY:
+      1. Time one baseline request (original param values).
+      2. Inject SLEEP/pg_sleep payloads per parameter and time each reply.
+      3. Confirm when the reply takes >= SLEEP-0.5s AND >= baseline+2s
+         (dual threshold filters out merely slow pages / jitter).
+
+    Only the injected request is slow on a vulnerable target — every other
+    page returns at normal speed, so the cost is ~1 extra request per param.
+    """
+    findings = []
+    parsed   = urlparse(url)
+    params   = parse_qs(parsed.query, keep_blank_values=True)
+
+    if not params:
+        return []
+
+    base_params = {k: v[0] for k, v in params.items()}
+    base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}?{urlencode(base_params)}"
+    _, base_elapsed = _timed_get(base_url)
+
+    for param_name in params:
+        for payload, dialect in TIME_PROBES:
+            test_params = {k: v[0] for k, v in params.items()}
+            test_params[param_name] = params[param_name][0] + payload
+            test_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}?{urlencode(test_params)}"
+
+            resp, elapsed = _timed_get(test_url)
+            if resp is None:
+                continue
+
+            if elapsed >= TIME_SLEEP_SECONDS - 0.5 and elapsed >= base_elapsed + 2.0:
+                findings.append(Finding(
+                    vuln_type   = "SQL Injection (Time-Based Blind)",
+                    severity    = "CRITICAL",
+                    url         = url,
+                    detail      = (
+                        f"Parameter '{param_name}' delays the response by ~{elapsed:.1f}s "
+                        f"(baseline ~{base_elapsed:.1f}s) when a {dialect} sleep function is injected. "
+                        "The database is executing our input. Even with errors suppressed and "
+                        "identical page content, an attacker can extract the full database "
+                        "bit-by-bit using timing."
+                    ),
+                    evidence    = (
+                        f"Payload \"{payload}\" in param '{param_name}' → "
+                        f"response in {elapsed:.1f}s vs baseline {base_elapsed:.1f}s"
+                    ),
+                    remediation = (
+                        "Use parameterized queries — time-based blind SQLi works even when the "
+                        "application reveals nothing in its responses. Validate parameter types "
+                        "and consider a WAF rule blocking SLEEP/pg_sleep/WAITFOR keywords."
+                    ),
+                ))
+                break  # one confirmed finding per parameter is enough
+
+    return findings
+
+
+# ── 4. Form-based injection surface ──────────────────────────────────────
 
 def check_forms_for_sqli(url: str, response: requests.Response) -> List[Finding]:
     """
@@ -367,5 +453,6 @@ def run_all_sqli_checks(url: str, response: requests.Response) -> List[Finding]:
     results = []
     results.extend(check_error_based_sqli(url))   # Inject → look for DB error messages
     results.extend(check_boolean_sqli(url))        # Compare TRUE vs FALSE responses
+    results.extend(check_time_based_sqli(url))    # Measure SLEEP() response delays
     results.extend(check_forms_for_sqli(url, response))  # Flag form input surfaces
     return results

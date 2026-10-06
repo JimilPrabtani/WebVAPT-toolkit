@@ -21,7 +21,6 @@ Why async background tasks?
   This is exactly how Nessus, Tenable.io, and Qualys work.
 """
 
-import json
 import uuid
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -41,10 +40,8 @@ from api.schemas import (
     ScanRequest,
     ScanStartedResponse,
     ScanDetailResponse,
-    ScanSummaryResponse,
     HistoryResponse,
     StatsResponse,
-    ErrorResponse,
 )
 from scanner.engine import run_scan
 from reports.report_writer import save_report

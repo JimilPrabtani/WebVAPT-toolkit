@@ -75,7 +75,7 @@ def init_db():
 
     # ── findings table ────────────────────────────────────────────────────
     # One row per vulnerability. Linked to scans via scan_id (foreign key).
-    # ai_analysis_json stores the full Gemini response for that finding.
+    # ai_analysis_json stores the full AI response for that finding.
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS findings (
             id              TEXT PRIMARY KEY,
@@ -93,11 +93,15 @@ def init_db():
         )
     """)
 
-    # ── schema migration: add cve_ids column (safe if already present) ──
-    try:
-        cursor.execute("ALTER TABLE findings ADD COLUMN cve_ids TEXT")
-    except Exception:
-        pass  # column already exists in databases created before this version
+    # ── schema migrations (safe if columns already exist) ──
+    for column in ("cve_ids", "owasp_id", "cwe_id", "sans_rank"):
+        try:
+            if column == "cve_ids":
+                cursor.execute("ALTER TABLE findings ADD COLUMN cve_ids TEXT")
+            else:
+                cursor.execute(f"ALTER TABLE findings ADD COLUMN {column} TEXT")
+        except Exception:
+            pass  # column already exists in databases created before this version
 
     # ── indexes ───────────────────────────────────────────────────────────
     # These make common queries fast even with thousands of findings.
@@ -135,7 +139,7 @@ def save_scan_results(scan_id: str, scan_result, exec_summary: dict):
     Called after the full scan pipeline completes.
 
     scan_result: ScanResult object from scanner/models.py
-    exec_summary: dict returned by Gemini analyzer
+    exec_summary: dict returned by AI analyzer
     """
     summary = scan_result.summary()
     conn    = get_connection()
@@ -173,8 +177,9 @@ def save_scan_results(scan_id: str, scan_result, exec_summary: dict):
         conn.execute("""
             INSERT INTO findings
                 (id, scan_id, vuln_type, severity, url, detail,
-                 evidence, remediation, ai_verified, cvss_score, cve_ids, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 evidence, remediation, ai_verified, cvss_score, cve_ids,
+                 owasp_id, cwe_id, sans_rank, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             str(uuid.uuid4()),
             scan_id,
@@ -187,6 +192,9 @@ def save_scan_results(scan_id: str, scan_result, exec_summary: dict):
             1 if f.ai_verified is True else (0 if f.ai_verified is False else None),
             f.cvss_score,
             json.dumps(f.cve_ids or []),
+            f.owasp_id,
+            f.cwe_id,
+            f.sans_rank,
             datetime.utcnow().isoformat(),
         ))
 
@@ -251,7 +259,7 @@ def get_scan_with_findings(scan_id: str) -> dict | None:
     conn.close()
 
     result = _scan_row_to_dict(scan_row)
-    result["findings"] = [dict(r) for r in findings_rows]
+    result["findings"] = [_finding_row_to_dict(r) for r in findings_rows]
     return result
 
 
@@ -297,6 +305,19 @@ def delete_scan(scan_id: str) -> bool:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
+
+def _finding_row_to_dict(row: sqlite3.Row) -> dict:
+    """Convert a findings row to a dict, parsing the cve_ids JSON column."""
+    d = dict(row)
+    if d.get("cve_ids"):
+        try:
+            d["cve_ids"] = json.loads(d["cve_ids"])
+        except (json.JSONDecodeError, TypeError):
+            d["cve_ids"] = []
+    else:
+        d["cve_ids"] = []
+    return d
+
 
 def _scan_row_to_dict(row: sqlite3.Row) -> dict:
     """Convert a sqlite3.Row to a plain dict, parsing JSON fields."""

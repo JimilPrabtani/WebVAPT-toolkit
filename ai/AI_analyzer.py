@@ -18,27 +18,23 @@ WHY BATCH INSTEAD OF PER-FINDING?
   - Even with many findings, 2 API calls total (batch + summary) is very fast
 
 RATE LIMIT NOTES:
-  - Gemini free tier: ~15 requests per minute (RPM)
-  - Gemini paid (Flash): 1000 RPM — but project-level limits may apply
-  - If you still hit rate limits: GEMINI_MODEL=gemini-1.5-flash (lower cost per token)
+  - OpenRouter free tier: ~15 requests per minute (RPM)
+  - AI_MODEL accepts a comma-separated fallback chain; dead/rate-limited
+    models are skipped automatically (see openai_provider.py).
 
-SUPPORTED AI PROVIDERS (configure in .env):
-  - gemini     → Google Gemini (GEMINI_API_KEY)
-  - openai     → OpenAI GPT-4o (OPENAI_API_KEY)
-  - anthropic  → Anthropic Claude (ANTHROPIC_API_KEY)
-  - ollama     → Local model via Ollama (no key needed)
-  - custom     → Any OpenAI-compatible API (CUSTOM_AI_BASE_URL)
+AI PROVIDER (configure in .env — single OpenAI-compatible endpoint):
+  - OPENAI_API_KEY=sk-or-v1-... (OpenRouter key)
+  - CUSTOM_AI_BASE_URL=https://openrouter.ai/api/v1 (OpenRouter endpoint)
+  - AI_MODEL=openai/gpt-4o-mini (any OpenRouter model id)
 
 TROUBLESHOOTING:
-  - "No AI provider configured" → Check AI_PROVIDER and API key in .env
-  - "All AI providers exhausted" → Primary and fallbacks failed; check API keys
+  - "No AI provider configured" → Check OPENAI_API_KEY and CUSTOM_AI_BASE_URL in .env
+  - "AI provider error" → Key, endpoint, or model is wrong; check .env
   - "non-JSON response" → AI returned unexpected format; scan still completes
-  - Rate limit hit → Upgrade API tier or use AI_FALLBACK=ollama for local inference
 """
 
 import json
 import re
-import time
 from typing import Optional, Callable
 
 from config import ENABLE_AI_ANALYSIS
@@ -50,7 +46,25 @@ from ai.prompts import (
     SUMMARY_PROMPT,
 )
 from ai.providers.openai_provider import OpenAIProvider
-from ai.providers.base import AIResponse, ProviderError
+from ai.providers.base import ProviderError
+
+
+# Last AI failure message (reset at the start of every analyze_scan call).
+# Lets engine.py put the reason into the report instead of silently marking
+# every finding unverified with no explanation.
+_last_ai_error: str = ""
+
+
+def get_last_ai_error() -> str:
+    """Return the last AI failure message ('' if the last run was clean)."""
+    return _last_ai_error
+
+
+def _record_ai_error(msg: str) -> None:
+    """Keep the FIRST error — it is usually the root cause (e.g. bad model)."""
+    global _last_ai_error
+    if not _last_ai_error:
+        _last_ai_error = msg
 
 
 def _parse_ai_response(response_text: str) -> dict:
@@ -112,7 +126,11 @@ def _apply_ai_data_to_finding(finding: Finding, ai_data: dict) -> None:
     """
     finding.ai_verified = ai_data.get("verified", False)
     finding.cvss_score  = ai_data.get("cvss_score")
-    finding.owasp_id    = ai_data.get("owasp_id")
+    # Normalize "A05:2021 - Security Misconfiguration" → "A05:2021"
+    # so report grouping doesn't split on the model's free-text suffix.
+    _owasp = ai_data.get("owasp_id")
+    _m = re.match(r"\s*(A\d{2}:\d{4})", str(_owasp or ""))
+    finding.owasp_id    = _m.group(1) if _m else (_owasp or None)
     finding.cwe_id      = ai_data.get("cwe_id")
     finding.sans_rank   = ai_data.get("sans_rank")
     finding.cve_ids     = _validate_cve_ids(ai_data.get("cve_ids"))
@@ -126,6 +144,7 @@ def _apply_ai_data_to_finding(finding: Finding, ai_data: dict) -> None:
     code   = ai_data.get("code_example", "")
     why    = ai_data.get("why_it_matters", "")
     attack = ai_data.get("attack_scenario", "")
+    prev   = ai_data.get("prevention", "")
     refs   = ai_data.get("references", [])
 
     remediation_parts = []
@@ -139,6 +158,8 @@ def _apply_ai_data_to_finding(finding: Finding, ai_data: dict) -> None:
         )
     if code:
         remediation_parts.append(f"SECURE CODE EXAMPLE:\n{code}")
+    if prev:
+        remediation_parts.append(f"PREVENTION (STOP IT RECURRING):\n{prev}")
     if refs:
         remediation_parts.append(
             "REFERENCES:\n" + "\n".join(f"  - {r}" for r in refs)
@@ -186,6 +207,10 @@ def analyze_scan(
         else:
             print(msg)
 
+    # Fresh error state for this run — engine.py reads it via get_last_ai_error()
+    global _last_ai_error
+    _last_ai_error = ""
+
     # Skip if AI is globally disabled in .env
     if not ENABLE_AI_ANALYSIS:
         log("[!] AI analysis disabled (ENABLE_AI_ANALYSIS=false in .env)")
@@ -196,7 +221,8 @@ def analyze_scan(
         provider = OpenAIProvider()
     except Exception as e:
         log(f"[!] AI provider error: {e}")
-        log("    → Check AI_PROVIDER/.env settings and API key for the configured endpoint.")
+        log("    → Check OPENAI_API_KEY / CUSTOM_AI_BASE_URL / AI_MODEL in .env.")
+        _record_ai_error(f"AI provider init failed: {e}")
         return {}
 
     # ── Sort findings by severity ──────────────────────────────────────────
@@ -240,13 +266,15 @@ def analyze_scan(
             if not analyses:
                 log("[!] AI returned empty analyses array — findings will not have AI enrichment")
             else:
-                log(f"[AI] Received {len(analyses)} analysis results")
+                log(f"[AI] Received {len(analyses)} analysis results (model: {response.model_used})")
                 for i, (finding, ai_data) in enumerate(zip(priority_findings, analyses)):
                     _apply_ai_data_to_finding(finding, ai_data)
-                    log(f"[AI]   ✓ {finding.vuln_type} (CVSS: {finding.cvss_score}, verified: {finding.ai_verified})")
+                    log(f"[AI]   [ok] {finding.vuln_type} (CVSS: {finding.cvss_score}, verified: {finding.ai_verified})")
 
         except ProviderError as e:
             log(f"[!] AI provider error during batch analysis: {e}")
+            log("    → Findings below are NOT AI-verified. Check AI_MODEL / key / endpoint in .env.")
+            _record_ai_error(f"Batch analysis failed: {e}")
             for f in priority_findings:
                 f.ai_verified = False
     else:
@@ -276,9 +304,10 @@ def analyze_scan(
     try:
         response     = provider.complete(SUMMARY_SYSTEM, prompt)
         exec_summary = _parse_ai_response(response.content)
-        log("[AI] Analysis complete ✓")
+        log("[AI] Analysis complete [ok]")
     except ProviderError as e:
         log(f"[!] AI executive summary failed: {e}")
+        _record_ai_error(f"Executive summary failed: {e}")
         exec_summary = {}
 
     return exec_summary

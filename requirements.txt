@@ -2,7 +2,6 @@
 requests==2.31.0
 beautifulsoup4==4.12.3
 python-dotenv==1.0.1
-colorama==0.4.6
 
 # ── Backend ───────────────────────────────────────
 fastapi==0.111.0
@@ -13,7 +12,7 @@ pydantic==2.7.1
 # sqlite3 is part of Python stdlib — no install needed
 
 # ── AI Layer (single OpenAI-compatible provider) ──
-openai>=1.30.0          # OpenAI GPT-4o, and all OpenAI-compatible endpoints
+openai>=1.30.0          # OpenAI + OpenRouter (via CUSTOM_AI_BASE_URL) + all OpenAI-compatible endpoints
 
 # ── Terminal UI (terminaltui, Node — see terminal-tui/) ──
 # The TUI is a Node app (`npx webvapt-tui`) that calls the FastAPI

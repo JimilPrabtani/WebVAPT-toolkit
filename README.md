@@ -1,15 +1,18 @@
 # WebPenTest AI Toolkit
 
-Automated web security scanner: crawl a target → run 30+ checks across 7 categories (OWASP Top 10) → AI grades HIGH/CRITICAL findings with CVSS + fixes → save to SQLite → read it in the terminal UI.
+Automated web security scanner: crawl a target → run 40+ checks across 12 categories (OWASP Top 10 + LLM Top 10) → AI grades HIGH/CRITICAL findings with CVSS + fixes + prevention → link findings into evidenced attack chains → save to SQLite → read it in the terminal UI.
 
 > Authorized testing only. Scan targets you own or have written permission to test.
 
-## Latest changes
+## Features
 
-- **TUI is now terminaltui** (`terminal-tui/`, Node): the old Textual TUI, xterm.js web terminal, and their Python deps are deleted.
-- **Split URLs**: API on `http://127.0.0.1:8000/api/v1`, TUI runs separately and calls it over HTTP. No API key config needed locally — the TUI falls back to `API_KEY` in the root `.env` (401s name the fix on-screen).
-- **Scan form has a START SCAN button** and navigates to a live status page on submit.
-- **Repo cleaned**: `__pycache__`, `.pytest_cache`, `.ruff_cache`, draft review files, and stale `DESIGN.md` removed.
+- **40 checks across 12 categories** (OWASP Top 10 + LLM Top 10): headers, XSS, SQLi (error/boolean/time-based), path traversal, active form testing + CSRF, LLM endpoint/model/key exposure, Nuclei-style JSON templates, OSV supply-chain lookup, sensitive paths, SSTI, secrets, TLS, open redirect, JWT.
+- **AI enrichment with free-model failover**: one batched call grades CRITICAL/HIGH/MEDIUM (CVSS, attack scenario, fix, systemic prevention); `AI_MODEL` is a fallback chain, dead models are skipped automatically.
+- **Evidenced attack chains**: findings linked into recon → exploit → impact paths for pentest reports.
+- **Three ways to run**: terminal UI, REST API, one-off CLI. `--no-ai` scans still get heuristic risk scores + static prevention guidance.
+- **ASCII severity** (`[!!] [!] [*] [.] [i]`), SSRF guard, SQLite + JSON/TXT reports.
+
+Prerequisites: Python 3.11+, Node 22+. Docker only needed for the Juice Shop test target below.
 
 ## Quick start
 
@@ -36,6 +39,7 @@ Or skip the servers — one-off CLI scan:
 
 ```bash
 python scan.py https://target.com --no-ai
+python scan.py http://localhost:3000 --all   # crawl up to CRAWL_HARD_CAP (200) pages
 ```
 
 ## Folder map
@@ -45,7 +49,9 @@ python scan.py https://target.com --no-ai
 ├── main.py            # FastAPI server (the scan engine API)
 ├── scan.py            # CLI entry point
 ├── config.py          # env vars, SSRF guard, timeouts
-├── scanner/           # crawl + 7 check modules + engine (run_scan)
+├── scanner/           # crawl + 12 check modules + engine (run_scan)
+│   └── templates/     # Nuclei-style declarative JSON probes (no code needed)
+├── scripts/           # helper scripts (benchmark_free_models.py)
 ├── ai/                # batched AI analysis (CVSS, fixes, risk score)
 ├── api/               # routes, SQLite layer, request/response schemas
 ├── reports/           # JSON + TXT report writer
@@ -67,16 +73,26 @@ Target URL
 CRAWL ── BFS walk of the target domain (up to MAX_PAGES_TO_CRAWL), responses cached
   │
   ▼
-SCAN ── 4 workers run all check modules per page:
-│  headers · xss · sqli · sensitive-paths · ssti · secrets · tls/open-redirect
+SCAN ── workers run all check modules per page (site-wide ones run once):
+│  headers · xss · sqli (error/boolean/time) · traversal · forms+csrf ·
+│  llm (OWASP LLM Top 10) · templates (Nuclei-style JSON) · osv (JS supply chain) ·
+│  sensitive-paths · ssti · secrets · tls/open-redirect
   │
   ▼
 DEDUP ── MD5 fingerprint per finding, drops duplicates
   │
   ▼
-AI ── CRITICAL/HIGH/MEDIUM in ONE batched call (CVSS + attack scenario + fix),
-│     plus one executive-summary call (risk score 0–100). Skipped with --no-ai.
-  │
+AI ── CRITICAL/HIGH/MEDIUM in ONE batched call (CVSS + attack scenario + fix +
+│     systemic prevention), plus one executive-summary call (risk score 0–100).
+│     Skipped with --no-ai (deterministic heuristic score + static prevention instead).
+│     AI_MODEL is a comma-separated fallback chain of OpenRouter free models —
+│     dead/rate-limited models are skipped automatically.
+│     Re-benchmark with `python scripts/benchmark_free_models.py`.
+   │
+   ▼
+CHAINS ── findings linked into evidenced exploitation paths
+│     (recon → exploit → impact, e.g. XSS + missing HttpOnly → session hijack)
+   │
   ▼
 SAVE ── SQLite (data/scans.db) + JSON/TXT (data/reports/)
   │
@@ -85,6 +101,18 @@ READ ── TUI pages (live status poll → results), API, or CLI output
 ```
 
 Severity is ASCII text (`[!!] [!] [*] [.] [i]`), never color. SSRF guard blocks private/internal targets unless `ALLOW_PRIVATE_TARGETS=true`.
+
+## Reference-tool parity
+
+Capabilities adopted from industry scanners (web-applicable ones implemented;
+host/container/infra auditing stays out of scope for a web VAPT tool):
+
+| Reference | Adopted as |
+|---|---|
+| Nuclei (templates) | `scanner/templates/*.json` declarative probes — add detections without code (`scanner/template_checks.py`) |
+| OSV-Scanner (supply chain) | `scanner/osv_checks.py` — JS lib versions resolved against api.osv.dev |
+| OWASP ZAP (spider + active + passive) | BFS crawler + SPA discovery, active injection probes, passive header/secret/JWT analysis |
+| OpenVAS / Trivy / Lynis | Out of scope (network-infra, container/image, host-hardening domains) |
 
 ## API
 
@@ -96,6 +124,7 @@ Base URL: `http://localhost:8000/api/v1` (send `X-API-Key` when `API_KEY` is set
 | `GET` | `/scan/{id}/status` | Lightweight poll while running |
 | `GET` | `/scan/{id}` | Full results + findings |
 | `GET` | `/history` | Past scans |
+| `GET` | `/history/target/{url}` | All scans for one target (trend) |
 | `GET` | `/stats` | Aggregate statistics |
 | `DELETE` | `/scan/{id}` | Delete a scan + findings |
 
@@ -107,6 +136,7 @@ cd terminal-tui && npm test && npm run typecheck && npm run build
 ```
 
 Live check: `docker run -d -p 3000:3000 bkimminich/juice-shop`, then `python scan.py http://localhost:3000`.
+Local/docker targets need `ALLOW_PRIVATE_TARGETS=true` in `.env` (SSRF guard blocks them otherwise).
 
 ## Docs (all at repo root)
 

@@ -2,8 +2,6 @@ import sys
 import argparse
 
 # Load .env FIRST — before any other import reads os.getenv().
-# Without this, provider_factory.py may read empty env vars if config.py
-# hasn't been imported yet when AI_analyzer.py calls get_provider().
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -21,6 +19,7 @@ def parse_args():
 Examples:
   python scan.py https://example.com
   python scan.py http://localhost:3000 --no-ai
+  python scan.py http://localhost:3000 --all
 
 IMPORTANT: Only scan applications you own or have written
            permission to test. Unauthorized scanning is illegal.
@@ -31,7 +30,19 @@ IMPORTANT: Only scan applications you own or have written
         "--no-ai",
         action="store_true",
         default=False,
-        help="Skip Gemini AI analysis (faster, no API calls)"
+        help="Skip AI analysis (faster, no API calls)"
+    )
+    parser.add_argument(
+        "--pages",
+        type=int,
+        default=None,
+        help="Max pages to crawl (default: MAX_PAGES_TO_CRAWL from .env)"
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        default=False,
+        help="Crawl the entire site (bounded by CRAWL_HARD_CAP, default 200)"
     )
     return parser.parse_args()
 
@@ -51,11 +62,12 @@ def main():
     use_ai = not args.no_ai
 
     print(f"\n  Target : {target}")
-    print(f"  AI Mode: {'Gemini enabled' if use_ai else 'Skipped (--no-ai)'}")
+    print(f"  AI Mode: {'AI enabled' if use_ai else 'Skipped (--no-ai)'}")
     print()
 
     try:
-        scan_result, exec_summary = run_scan(target_url=target, run_ai=use_ai)
+        max_pages = 0 if args.all else args.pages
+        scan_result, exec_summary = run_scan(target_url=target, run_ai=use_ai, max_pages=max_pages)
     except KeyboardInterrupt:
         print("\n[!] Scan interrupted by user.")
         sys.exit(1)
@@ -71,6 +83,17 @@ def main():
     print()
 
     findings = scan_result.sorted_findings()
+    summary = scan_result.summary()
+    cov = summary.get("coverage", {})
+    print(f"RISK: {exec_summary.get('overall_risk', '?')} "
+          f"({exec_summary.get('risk_score', '?')}/100)")
+    print(f"COVERAGE: {summary['pages_crawled']} page(s), "
+          f"{cov.get('params_tested', '?')} param(s), "
+          f"{cov.get('forms_found', '?')} form(s), "
+          f"{cov.get('api_endpoints_probed', '?')} API endpoint(s)")
+    for chain in summary.get("attack_chains", []):
+        print(f"CHAIN: [{chain.get('severity', '?')}] {chain.get('title', '?')} — {chain.get('impact', '')}")
+    print()
     if findings:
         icons = {"CRITICAL": "[CRIT]", "HIGH": "[HIGH]", "MEDIUM": "[MED]",
                  "LOW": "[LOW]", "INFO": "[INFO]"}

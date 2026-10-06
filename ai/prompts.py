@@ -69,6 +69,7 @@ Return EXACTLY this JSON structure:
         "Specific step 2",
         "Specific step 3"
       ],
+      "prevention": "1-2 sentences: the SYSTEMIC change (process, tooling, CI gate) that stops this whole bug class from recurring — not just this one instance",
       "code_example": "5-15 lines of secure code showing the fix. Use the most likely server language.",
       "references": [
         "https://owasp.org/... (OWASP)",

@@ -1,0 +1,131 @@
+[
+  {
+    "id": "exposed-git-config",
+    "name": "Sensitive Path Exposure: /.git/config",
+    "severity": "HIGH",
+    "owasp": "A05:2021",
+    "cwe": "CWE-541",
+    "description": "Git repository config is publicly readable — attackers can reconstruct the full source history (gitdumper) and hunt for hardcoded credentials.",
+    "remediation": "Block /.git at the reverse proxy (return 404) and never deploy the .git directory to the webroot.",
+    "requests": [
+      {"method": "GET", "path": "/.git/config", "match_status": [200],
+       "match_body": ["[core]", "repositoryformatversion"], "min_bytes": 10}
+    ]
+  },
+  {
+    "id": "exposed-git-head",
+    "name": "Sensitive Path Exposure: /.git/HEAD",
+    "severity": "HIGH",
+    "owasp": "A05:2021",
+    "cwe": "CWE-541",
+    "description": "Git HEAD reference is exposed, confirming the .git directory is web-accessible and the codebase can likely be dumped.",
+    "remediation": "Block /.git at the reverse proxy and remove version-control metadata from deployments.",
+    "requests": [
+      {"method": "GET", "path": "/.git/HEAD", "match_status": [200],
+       "match_body_any": ["ref: refs/heads", "ref: refs/tags"], "min_bytes": 5}
+    ]
+  },
+  {
+    "id": "exposed-env-file",
+    "name": "Sensitive Path Exposure: /.env",
+    "severity": "CRITICAL",
+    "owasp": "A05:2021",
+    "cwe": "CWE-538",
+    "description": "Environment file is publicly readable — typically contains database passwords, API keys, and app secrets.",
+    "remediation": "Move .env above the webroot immediately, rotate every secret it contained, and deny dotfiles at the web server.",
+    "requests": [
+      {"method": "GET", "path": "/.env", "match_status": [200],
+       "match_body_any": ["APP_KEY", "DB_PASSWORD", "SECRET", "API_KEY", "PASSWORD="], "min_bytes": 10}
+    ]
+  },
+  {
+    "id": "apache-server-status",
+    "name": "Sensitive Path Exposure: /server-status",
+    "severity": "HIGH",
+    "owasp": "A05:2021",
+    "cwe": "CWE-200",
+    "description": "Apache server-status page is public — leaks worker activity, requested URLs, and client IPs in real time.",
+    "remediation": "Restrict /server-status to localhost (Require ip 127.0.0.1) or disable mod_status.",
+    "requests": [
+      {"method": "GET", "path": "/server-status", "match_status": [200],
+       "match_body": ["Apache Status"], "min_bytes": 50}
+    ]
+  },
+  {
+    "id": "spring-actuator",
+    "name": "Sensitive Path Exposure: /actuator",
+    "severity": "MEDIUM",
+    "owasp": "A05:2021",
+    "cwe": "CWE-200",
+    "description": "Spring Boot Actuator index is exposed — enumerates health/env/metrics endpoints; some builds expose env variables with credentials.",
+    "remediation": "Disable unneeded actuator endpoints and require authentication (Spring Security) for the rest.",
+    "requests": [
+      {"method": "GET", "path": "/actuator", "match_status": [200],
+       "match_body_any": ["\"_links\"", "self", "health"], "match_content_type": ["application/json"], "min_bytes": 10}
+    ]
+  },
+  {
+    "id": "swagger-ui",
+    "name": "Sensitive Path Exposure: /swagger-ui",
+    "severity": "LOW",
+    "owasp": "A05:2021",
+    "cwe": "CWE-200",
+    "description": "Interactive API documentation is public — gives attackers the full endpoint/parameter map for free. Useful, but review that no internal-only APIs are documented.",
+    "remediation": "Keep Swagger only if the API is intentionally public; otherwise gate it behind auth or disable in production profiles.",
+    "requests": [
+      {"method": "GET", "path": "/swagger-ui.html", "match_status": [200],
+       "match_body_any": ["swagger", "Swagger UI"], "min_bytes": 100}
+    ]
+  },
+  {
+    "id": "graphql-endpoint",
+    "name": "Sensitive Path Exposure: /graphql",
+    "severity": "INFO",
+    "owasp": "A05:2021",
+    "description": "A GraphQL endpoint was detected. Manually test (authorized): introspection enabled? field suggestions leaking schema? query depth/cost limits (DoS)? broken object-level authorization on nodes?",
+    "remediation": "Disable introspection in production, enforce query depth/cost limits, and authorize every field/node server-side.",
+    "requests": [
+      {"method": "GET", "path": "/graphql", "match_status": [200, 400, 405],
+       "match_body_any": ["GraphQL", "graphql", "query"], "min_bytes": 10}
+    ]
+  },
+  {
+    "id": "phpinfo",
+    "name": "Sensitive Path Exposure: /phpinfo",
+    "severity": "MEDIUM",
+    "owasp": "A05:2021",
+    "cwe": "CWE-200",
+    "description": "phpinfo() output is public — full PHP config, loaded extensions with versions, paths, and environment variables.",
+    "remediation": "Remove phpinfo files from production and disable expose_php in php.ini.",
+    "requests": [
+      {"method": "GET", "path": "/phpinfo.php", "match_status": [200],
+       "match_body_any": ["phpinfo()", "PHP Version"], "min_bytes": 100}
+    ]
+  },
+  {
+    "id": "composer-json",
+    "name": "Sensitive Path Exposure: /composer.json",
+    "severity": "LOW",
+    "owasp": "A06:2021",
+    "cwe": "CWE-200",
+    "description": "composer.json is readable — reveals the exact PHP dependency tree for targeted CVE hunting.",
+    "remediation": "Stop deploying composer.json/composer.lock to the webroot.",
+    "requests": [
+      {"method": "GET", "path": "/composer.json", "match_status": [200],
+       "match_body_any": ["\"require\"", "\"name\""], "match_content_type": ["application/json"], "min_bytes": 10}
+    ]
+  },
+  {
+    "id": "package-json",
+    "name": "Sensitive Path Exposure: /package.json",
+    "severity": "LOW",
+    "owasp": "A06:2021",
+    "cwe": "CWE-200",
+    "description": "package.json is readable — reveals the exact JavaScript dependency tree for targeted CVE hunting.",
+    "remediation": "Stop deploying package.json/package-lock.json to the webroot.",
+    "requests": [
+      {"method": "GET", "path": "/package.json", "match_status": [200],
+       "match_body_any": ["\"dependencies\"", "\"name\""], "match_content_type": ["application/json"], "min_bytes": 10}
+    ]
+  }
+]

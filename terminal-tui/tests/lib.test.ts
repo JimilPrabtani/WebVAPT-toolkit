@@ -24,9 +24,9 @@ describe("webvapt lib (port of tui/backend.py)", () => {
     assert.deepEqual(row, ["[! ] HIGH", "XSS", "https://example.com/?q=1", "7.5", "YES"]);
   });
 
-  it("normalizeTarget requires input and adds https", () => {
+  it("normalizeTarget requires input and adds http", () => {
     assert.equal(normalizeTarget("").error.length > 0, true);
-    assert.deepEqual(normalizeTarget("example.com"), { url: "https://example.com", error: "" });
+    assert.deepEqual(normalizeTarget("example.com"), { url: "http://example.com", error: "" });
     assert.deepEqual(normalizeTarget("http://x.com"), { url: "http://x.com", error: "" });
   });
 

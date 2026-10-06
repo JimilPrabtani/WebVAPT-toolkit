@@ -97,6 +97,10 @@ export interface Finding {
   remediation?: string | null;
   ai_verified?: number | null;
   cvss_score?: number | null;
+  owasp_id?: string | null;
+  cwe_id?: string | null;
+  sans_rank?: string | null;
+  cve_ids?: string[] | null;
   created_at: string;
 }
 
@@ -125,13 +129,24 @@ export function findingRow(f: Finding): string[] {
 }
 
 export function summaryText(scan: ScanDetail): string {
-  const s = (scan.summary_json ?? {}) as { by_severity?: Record<string, number> };
+  const s = (scan.summary_json ?? {}) as {
+    by_severity?: Record<string, number>;
+    by_category?: Record<string, number>;
+    by_owasp?: Record<string, number>;
+    top_urls?: { url: string; findings: number }[];
+    coverage?: {
+      params_tested?: number;
+      forms_found?: number;
+      forms_submitted?: number;
+      api_endpoints_probed?: number;
+    };
+  };
   const bySev = s.by_severity ?? {};
-  const es = (scan.exec_summary ?? {}) as { executive_summary?: string; immediate_actions?: string[] };
+  const es = (scan.exec_summary ?? {}) as { executive_summary?: string; immediate_actions?: string[]; source?: string; ai_error?: string };
   const lines = [
     `Target   : ${scan.target_url}`,
     `Status   : ${scan.status}   Pages: ${scan.pages_crawled ?? 0}   Duration: ${Math.round(scan.duration_secs ?? 0)}s`,
-    `Risk     : ${scan.overall_risk ?? "N/A"} (${scan.risk_score ?? "?"}//100)   Findings: ${scan.total_findings ?? 0}`,
+    `Risk     : ${scan.overall_risk ?? "N/A"} (${scan.risk_score ?? "?"}//100)${es.source === "heuristic" ? " [heuristic]" : ""}   Findings: ${scan.total_findings ?? 0}`,
     "",
     "BY SEVERITY",
   ];
@@ -139,6 +154,36 @@ export function summaryText(scan: ScanDetail): string {
     const n = bySev[sev] ?? 0;
     lines.push(`  ${severityTag(sev)} ${sev.padEnd(8)} ${String(n).padStart(3)}  ${"#".repeat(Math.min(n, 40))}`);
   }
+  if (s.by_category && Object.keys(s.by_category).length) {
+    lines.push("", "BY CATEGORY");
+    for (const [cat, n] of Object.entries(s.by_category).sort((a, b) => b[1] - a[1])) {
+      lines.push(`  ${cat} : ${n}`);
+    }
+  }
+  if (s.by_owasp && Object.keys(s.by_owasp).length) {
+    lines.push("", "OWASP TOP 10");
+    for (const [id, n] of Object.entries(s.by_owasp).sort()) {
+      lines.push(`  ${id} : ${n}`);
+    }
+  }
+  if (s.top_urls?.length) {
+    lines.push("", "TOP AFFECTED URLS");
+    s.top_urls.slice(0, 5).forEach((t, i) => lines.push(`  ${i + 1}. [${t.findings}] ${(t.url || "").slice(0, 80)}`));
+  }
+  const chains = (s as { attack_chains?: { title: string; severity: string; impact: string }[] }).attack_chains ?? [];
+  if (chains.length) {
+    lines.push("", "ATTACK CHAINS");
+    chains.slice(0, 3).forEach((c, i) => lines.push(`  ${i + 1}. [${c.severity}] ${c.title} — ${c.impact}`));
+  }
+  if (s.coverage && (s.coverage.params_tested != null || s.coverage.forms_found != null)) {
+    const c = s.coverage;
+    lines.push(
+      "",
+      "COVERAGE",
+      `  Params tested: ${c.params_tested ?? "?"}   Forms: ${c.forms_found ?? "?"} found / ${c.forms_submitted ?? "?"} submitted   API endpoints: ${c.api_endpoints_probed ?? "?"}`
+    );
+  }
+  if (es.ai_error) lines.push("", "AI ANALYSIS FAILED", "-".repeat(40), String(es.ai_error).slice(0, 300), "Fix AI_MODEL / key in .env, then re-run the scan.");
   if (es.executive_summary) lines.push("", "EXECUTIVE SUMMARY", "-".repeat(40), String(es.executive_summary).slice(0, 2000));
   if (es.immediate_actions?.length) {
     lines.push("", "IMMEDIATE ACTIONS");
@@ -155,6 +200,16 @@ export function findingDetailText(f: Finding): string {
   ];
   if (f.detail) lines.push("", "WHAT WAS FOUND", "-".repeat(40), f.detail);
   if (f.evidence) lines.push("", "EVIDENCE", "-".repeat(40), String(f.evidence).slice(0, 2000));
+  const mapping = [
+    f.owasp_id ? `OWASP: ${f.owasp_id}` : null,
+    f.cwe_id ? `CWE: ${f.cwe_id}` : null,
+    f.sans_rank ? `SANS: ${f.sans_rank}` : null,
+  ].filter(Boolean);
+  if (mapping.length) lines.push("", "CLASSIFICATION", "-".repeat(40), mapping.join("   "));
+  if (f.cve_ids && f.cve_ids.length) {
+    lines.push("", "CVEs", "-".repeat(40));
+    for (const c of f.cve_ids.slice(0, 10)) lines.push(`  - ${c}  (https://nvd.nist.gov/vuln/detail/${c})`);
+  }
   if (f.remediation) lines.push("", "REMEDIATION", "-".repeat(40), String(f.remediation).replace(/\\n/g, "\n").slice(0, 4000));
   return lines.join("\n");
 }
@@ -162,7 +217,7 @@ export function findingDetailText(f: Finding): string {
 export function normalizeTarget(target: string): { url: string; error: string } {
   const t = (target || "").trim();
   if (!t) return { url: "", error: "Enter a target URL first." };
-  const url = /^https?:\/\//i.test(t) ? t : `https://${t}`;
+  const url = /^https?:\/\//i.test(t) ? t : `http://${t}`;
   if (url.length < 8) return { url: "", error: "Invalid URL." };
   return { url, error: "" };
 }

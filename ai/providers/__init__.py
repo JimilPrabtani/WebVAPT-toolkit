@@ -1,3 +1,1 @@
-from ai.providers.base import AIProvider, AIResponse
-
-__all__ = ["AIProvider", "AIResponse"]
+"""ai.providers package — import from ai.providers.base / openai_provider directly."""

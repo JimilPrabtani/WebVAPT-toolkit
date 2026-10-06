@@ -14,7 +14,7 @@ Usage:
 import json
 import os
 from datetime import datetime
-from scanner.models import ScanResult
+from scanner.models import ScanResult, finding_category, finding_owasp, OWASP_NAMES
 from config import SEVERITY_ORDER
 
 
@@ -66,12 +66,13 @@ def save_json_report(scan_result: ScanResult, exec_summary: dict) -> str:
 
 # ── Text Report ───────────────────────────────────────────────────────────
 
+# ASCII severity markers — repo standard (never color, never emoji).
 SEV_ICONS = {
-    "CRITICAL": "🔴",
-    "HIGH":     "🟠",
-    "MEDIUM":   "🟡",
-    "LOW":      "🟢",
-    "INFO":     "🔵",
+    "CRITICAL": "[!!]",
+    "HIGH":     "[!]",
+    "MEDIUM":   "[*]",
+    "LOW":      "[.]",
+    "INFO":     "[i]",
 }
 
 
@@ -94,13 +95,28 @@ def save_text_report(scan_result: ScanResult, exec_summary: dict) -> str:
     ln(f"  Duration   : {scan_result.scan_duration:.1f}s")
     ln(f"  Pages Scanned: {len(scan_result.pages_crawled)}")
 
+    # ── Scan Coverage ───────────────────────────────────────────────────
+    cov = scan_result.coverage or {}
+    if cov:
+        h1("SCAN COVERAGE (WHAT WAS TESTED)")
+        ln(f"  Pages crawled        : {cov.get('pages_crawled', len(scan_result.pages_crawled))}")
+        ln(f"  URL parameters tested: {cov.get('params_tested', '?')}")
+        ln(f"  Forms found          : {cov.get('forms_found', '?')}")
+        ln(f"  Form submissions made: {cov.get('forms_submitted', '?')}")
+        ln(f"  API endpoints probed : {cov.get('api_endpoints_probed', '?')}")
+
     # ── Executive Summary ─────────────────────────────────────────────
     if exec_summary:
         h1("EXECUTIVE SUMMARY")
         risk = exec_summary.get("overall_risk", "UNKNOWN")
         score = exec_summary.get("risk_score", "N/A")
-        ln(f"  Overall Risk  : {SEV_ICONS.get(risk, '⚪')} {risk}")
+        ln(f"  Overall Risk  : {SEV_ICONS.get(risk, '[?]')} {risk}")
         ln(f"  Risk Score    : {score}/100")
+        if exec_summary.get("source") == "heuristic":
+            ln("  Score Source  : heuristic (AI analysis was off or unavailable)")
+        if exec_summary.get("ai_error"):
+            ln(f"  AI Error      : {exec_summary['ai_error']}")
+            ln("                    Fix AI_MODEL / key in .env, then re-run the scan.")
         ln()
         ln(exec_summary.get("executive_summary", ""))
 
@@ -128,8 +144,45 @@ def save_text_report(scan_result: ScanResult, exec_summary: dict) -> str:
     for sev in SEVERITY_ORDER:
         count = summary["by_severity"].get(sev, 0)
         icon  = SEV_ICONS.get(sev, "")
-        bar   = "█" * count
+        bar   = "#" * min(count, 40)
         ln(f"  {icon} {sev:<10} {count:>3}  {bar}")
+
+    # ── Findings by Category ────────────────────────────────────────
+    if summary.get("by_category"):
+        ln()
+        ln("  BY CATEGORY:")
+        for cat, count in sorted(summary["by_category"].items(), key=lambda kv: -kv[1]):
+            ln(f"    • {cat}: {count}")
+
+    # ── OWASP Top 10 Mapping ────────────────────────────────────────
+    if summary.get("by_owasp"):
+        ln()
+        ln("  OWASP TOP 10 (2021) MAPPING:")
+        for owasp_id, count in sorted(summary["by_owasp"].items()):
+            name = OWASP_NAMES.get(owasp_id, "")
+            label = f"{owasp_id} {name}".strip() if owasp_id != "Unmapped" else "Unmapped"
+            ln(f"    • {label}: {count}")
+
+    # ── Attack Chains ─────────────────────────────────────────────────
+    h1("ATTACK CHAINS (EVIDENCED EXPLOITATION PATHS)")
+    chains = summary.get("attack_chains", [])
+    if not chains:
+        ln("  No multi-step chains — this scan's findings don't link into known attack paths.")
+    else:
+        ln("  Each step below cites a real finding from this scan. Reproduce each link")
+        ln("  in order during authorized testing to confirm the full path.")
+        for idx, c in enumerate(chains, 1):
+            icon = SEV_ICONS.get(c.get("severity", ""), "")
+            h2(f"[chain {idx}] {icon} {c.get('title', '?')}")
+            ln(f"  Impact: {c.get('impact', '')}")
+            ln()
+            for line in str(c.get("narrative", "")).split("\n"):
+                ln(f"    {line}")
+            ln()
+            ln("  EVIDENCE LINKS:")
+            for step in c.get("steps", []):
+                ln(f"    • [{step.get('severity', '?')}] {step.get('finding', '?')}")
+                ln(f"      {step.get('url', '')}")
 
     # ── Detailed Findings ─────────────────────────────────────────────
     h1("DETAILED FINDINGS")
@@ -144,10 +197,17 @@ def save_text_report(scan_result: ScanResult, exec_summary: dict) -> str:
             ln(f"  Severity  : {f.severity}" +
                (f" (CVSS {f.cvss_score:.1f})" if f.cvss_score else ""))
             ln(f"  URL       : {f.url}")
+            owasp = finding_owasp(f.vuln_type, f.owasp_id)
+            classif = f"Category: {finding_category(f.vuln_type)} | OWASP: {owasp}"
+            if f.cwe_id:
+                classif += f" | {f.cwe_id}"
+            if f.cve_ids:
+                classif += f" | CVEs: {', '.join(f.cve_ids)}"
+            ln(f"  {classif}")
             if f.ai_verified is True:
-                ln(f"  AI Status : ✅ Verified by Gemini")
+                ln("  AI Status : [verified by AI]")
             elif f.ai_verified is False:
-                ln(f"  AI Status : ⚠️  Could not verify")
+                ln("  AI Status : [could not verify]")
             ln()
             ln("  DETAIL:")
             for line in f.detail.split("\n"):

@@ -14,9 +14,8 @@ Why this matters:
 Think of these as contracts between your API and whoever calls it.
 """
 
-from pydantic import BaseModel, HttpUrl, field_validator
+from pydantic import BaseModel, field_validator
 from typing import Optional
-from datetime import datetime
 
 
 # ── REQUEST schemas (what the API accepts) ────────────────────────────────
@@ -27,8 +26,8 @@ class ScanRequest(BaseModel):
     The client sends this JSON to start a new scan.
     """
     target_url: str
-    enable_ai:  bool = True    # Can disable AI for faster scans
-    max_pages:  int  = 20      # Override MAX_PAGES_TO_CRAWL per-scan
+    enable_ai:  bool = True        # Can disable AI for faster scans
+    max_pages:  Optional[int] = None  # None = MAX_PAGES_TO_CRAWL from .env; 0 = entire site (capped)
 
     @field_validator("target_url")
     @classmethod
@@ -66,6 +65,10 @@ class FindingResponse(BaseModel):
     remediation: Optional[str] = None
     ai_verified: Optional[int] = None   # 1=verified, 0=not verified, None=not checked
     cvss_score:  Optional[float] = None
+    owasp_id:    Optional[str]   = None
+    cwe_id:      Optional[str]   = None
+    sans_rank:   Optional[str]   = None
+    cve_ids:     list[str]       = []
     created_at:  str
 
 
@@ -124,9 +127,3 @@ class StatsResponse(BaseModel):
     high_findings:      int
     most_scanned_target: Optional[str]
     avg_risk_score:     Optional[float]
-
-
-class ErrorResponse(BaseModel):
-    """Standard error shape returned on 4xx/5xx responses."""
-    error:   str
-    detail:  Optional[str] = None

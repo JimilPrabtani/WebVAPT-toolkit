@@ -21,10 +21,10 @@ cp .env.example .env   # Add your API key(s)
 3. Add test cases in `tests/unit/test_your_check.py`
 4. Document: what it scans, which OWASP/CWE/MITRE category it maps to
 
-### New AI Provider
-1. Create `ai/providers/your_provider.py` implementing `AIProvider` (see `ai/providers/base.py`)
-2. Register it in `ai/provider_factory.py` `_build_provider()`
-3. Add env var documentation to `.env.example`
+### New AI Model
+1. No code change needed — this project uses a single OpenAI-compatible endpoint.
+2. Set `CUSTOM_AI_BASE_URL`, `OPENAI_API_KEY`, and `AI_MODEL` in `.env` (e.g. OpenRouter).
+3. Add env var documentation to `.env.example` if you introduce a new variable.
 
 ### Bug Fix
 1. Open an issue first for non-trivial changes

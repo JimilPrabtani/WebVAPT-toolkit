@@ -48,11 +48,12 @@ import requests
 import urllib3
 import ipaddress
 import socket
+import time
 from collections import deque
 from typing import List, Tuple, Optional, Dict
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
-from config import DEFAULT_HEADERS, SCAN_TIMEOUT, MAX_PAGES_TO_CRAWL, ALLOW_INSECURE_TLS, ALLOW_PRIVATE_TARGETS
+from config import DEFAULT_HEADERS, SCAN_TIMEOUT, MAX_PAGES_TO_CRAWL, ALLOW_INSECURE_TLS, ALLOW_PRIVATE_TARGETS, CRAWL_HARD_CAP
 
 # Suppress TLS warnings only when the user has explicitly opted into insecure mode.
 if ALLOW_INSECURE_TLS:
@@ -62,6 +63,11 @@ _TLS_VERIFY = not ALLOW_INSECURE_TLS
 
 # ── Per-scan cache (prevents re-fetching same URL within a single scan) ──────
 _response_cache: Dict[str, Optional[requests.Response]] = {}
+
+# One shared Session = connection pooling + keep-alive across the whole scan.
+# Without it every request pays a fresh TCP/TLS handshake (huge on slow targets).
+_session = requests.Session()
+_session.headers.update(DEFAULT_HEADERS)
 
 
 def _cache_clear() -> None:
@@ -107,6 +113,11 @@ def fetch(url: str, allow_redirects: bool = True, _use_cache: bool = True) -> Op
     Returns:
         Response object or None on network error
 
+    RETRY BEHAVIOR:
+        Transient failures (connection reset, DNS hiccup, timeout) get exactly
+        ONE retry after a short pause before giving up. Non-transient errors
+        (bad URL, too many redirects, TLS errors) are not retried.
+
     Benefits of caching:
       - Crawl phase already fetches all pages → scan phase reuses responses
       - If a page is referenced from multiple scan contexts, fetch once
@@ -124,21 +135,27 @@ def fetch(url: str, allow_redirects: bool = True, _use_cache: bool = True) -> Op
                 _response_cache[url] = None
             return None
 
-    try:
-        response = requests.get(
-            url,
-            headers=DEFAULT_HEADERS,
-            timeout=SCAN_TIMEOUT,
-            allow_redirects=allow_redirects,
-            verify=_TLS_VERIFY,
-        )
-        if _use_cache:
-            _response_cache[url] = response
-        return response
-    except requests.exceptions.RequestException:
-        if _use_cache:
-            _response_cache[url] = None
-        return None
+    response = None
+    for attempt in (1, 2):
+        try:
+            response = _session.get(
+                url,
+                timeout=SCAN_TIMEOUT,
+                allow_redirects=allow_redirects,
+                verify=_TLS_VERIFY,
+            )
+            break  # success — no retry needed
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout):
+            if attempt == 2:
+                break
+            time.sleep(0.5)  # brief pause, then one retry
+        except requests.exceptions.RequestException:
+            break  # non-transient — don't retry
+
+    if _use_cache:
+        _response_cache[url] = response
+    return response
 
 
 def parse_html(response: requests.Response) -> BeautifulSoup:
@@ -249,36 +266,45 @@ def _discover_spa_paths(origin: str, existing_urls: set, limit: int) -> List[Tup
     print(f"[*] SPA detected — probing {len(SPA_DISCOVERY_PATHS)} common paths...")
     discovered = []
 
+    # Hash-fragment Angular routes can't be fetched separately — record them
+    # against the homepage response without any extra requests.
+    hashed = []
+    fetchable_paths = []
     for path in SPA_DISCOVERY_PATHS:
+        if path.startswith("/#"):
+            hashed.append(path)
+        else:
+            fetchable_paths.append(path)
+
+    base_resp = _response_cache.get(origin)
+    for path in hashed:
+        url = origin + path
+        if url not in existing_urls and base_resp is not None:
+            existing_urls.add(url)
+            discovered.append((url, base_resp))
+
+    # Probe all remaining paths concurrently (4 workers), then keep the first
+    # `limit` hits in the original (curated) order.
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _probe(path: str):
+        url = origin + path
+        if url in existing_urls:
+            return None
+        resp = fetch(url, _use_cache=True)
+        if resp is None or resp.status_code not in (200, 206) or len(resp.content) < 50:
+            return None
+        return (url, resp)
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        hits = list(ex.map(_probe, fetchable_paths))
+
+    for hit in hits:
         if len(discovered) >= limit:
             break
-
-        # Handle hash-fragment Angular routes: Angular SPAs use /#/route
-        # These are client-side only — we can't fetch them separately.
-        # Instead we record them as found but use the homepage response.
-        if path.startswith("/#"):
-            url = origin + path
-            if url not in existing_urls:
-                base_resp = _response_cache.get(origin)
-                if base_resp is not None:
-                    existing_urls.add(url)
-                    discovered.append((url, base_resp))
-            continue
-
-        url  = origin + path
-        if url in existing_urls:
-            continue
-
-        resp = fetch(url, _use_cache=True)
-        if resp is None:
-            continue
-        if resp.status_code not in (200, 206):
-            continue
-        if len(resp.content) < 50:
-            continue
-
-        existing_urls.add(url)
-        discovered.append((url, resp))
+        if hit is not None and hit[0] not in existing_urls:
+            existing_urls.add(hit[0])
+            discovered.append(hit)
 
     print(f"[*] SPA discovery: found {len(discovered)} additional page(s)")
     return discovered
@@ -297,14 +323,21 @@ def crawl(start_url: str, max_pages: int = None) -> List[Tuple[str, requests.Res
       likely a SPA with JS-rendered routing. We automatically run _discover_spa_paths()
       to find additional scan surface (API endpoints, known routes, etc.).
 
-    Args:
-        start_url: Entry point for the crawl
-        max_pages: Override MAX_PAGES_TO_CRAWL limit (None = use config)
+     Args:
+         start_url: Entry point for the crawl
+         max_pages: Override MAX_PAGES_TO_CRAWL limit.
+                    None = use config default; 0 or negative = entire site
+                    (bounded by CRAWL_HARD_CAP).
 
-    Returns:
-        List of (url, response) tuples already fetched
-    """
-    limit        = max_pages if max_pages is not None else MAX_PAGES_TO_CRAWL
+     Returns:
+         List of (url, response) tuples already fetched
+     """
+    if max_pages is None:
+        limit = MAX_PAGES_TO_CRAWL
+    elif max_pages <= 0:
+        limit = CRAWL_HARD_CAP   # "all pages" mode — hard cap protects against runaway crawls
+    else:
+        limit = max_pages
     parsed_start = urlparse(start_url)
     base_domain  = parsed_start.netloc
     origin       = f"{parsed_start.scheme}://{parsed_start.netloc}"

@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 ENABLE_AI_ANALYSIS: bool = os.getenv("ENABLE_AI_ANALYSIS", "true").lower() == "true"
 
 # Set ALLOW_PRIVATE_TARGETS=false in .env when the API is internet-facing
@@ -29,6 +28,9 @@ def _int_env(name: str, default: int) -> int:
 
 SCAN_TIMEOUT: int = _int_env("SCAN_TIMEOUT", 10)
 MAX_PAGES_TO_CRAWL: int = _int_env("MAX_PAGES_TO_CRAWL", 20)
+# Safety net for "scan all pages" mode (max_pages=0): BFS never exceeds this.
+CRAWL_HARD_CAP: int = _int_env("CRAWL_HARD_CAP", 200)
+SCAN_WORKERS: int = _int_env("SCAN_WORKERS", 4)
 
 DEFAULT_HEADERS: dict = {
     "User-Agent": (
@@ -83,17 +85,17 @@ def is_ssrf_safe(url: str) -> bool:
 
 def validate_config() -> None:
     """Validate .env configuration at startup and print actionable warnings."""
-    provider = os.getenv("AI_PROVIDER", "gemini").strip().lower()
-    key_map = {
-        "gemini": "GEMINI_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
-    }
-    if ENABLE_AI_ANALYSIS and provider in key_map:
-        key_name = key_map[provider]
-        if not os.getenv(key_name, "").strip():
-            print(f"[!] CONFIG ERROR: AI_PROVIDER={provider} but {key_name} is not set in .env.")
-            print(f"    -> AI analysis will fail. Set {key_name}=your_key in .env.")
+    if ENABLE_AI_ANALYSIS:
+        if not os.getenv("OPENAI_API_KEY", "").strip():
+            print("[!] CONFIG ERROR: ENABLE_AI_ANALYSIS=true but OPENAI_API_KEY is not set in .env.")
+            print("    -> Set OPENAI_API_KEY=your_key in .env (use an OpenRouter key with OpenRouter base URL).")
+        if not os.getenv("CUSTOM_AI_BASE_URL", "").strip():
+            print("[!] CONFIG NOTE: CUSTOM_AI_BASE_URL is not set — using OpenAI default endpoint.")
+            print("    -> For OpenRouter set CUSTOM_AI_BASE_URL=https://openrouter.ai/api/v1")
+        if not (os.getenv("AI_MODEL", "").strip() or os.getenv("OPENAI_MODEL", "").strip()):
+            print("[!] CONFIG NOTE: AI_MODEL is not set — using default gpt-4o.")
+            print("    -> For OpenRouter free models set AI_MODEL to a comma-separated")
+            print("       fallback chain, e.g. AI_MODEL=nvidia/nemotron-3-super-120b-a12b:free,cohere/north-mini-code:free")
     if not os.getenv("API_KEY", "").strip():
         print("[!] SECURITY WARNING: API_KEY is not set. The API is unprotected.")
         print("    -> Set API_KEY=$(openssl rand -hex 32) in .env for production.")
