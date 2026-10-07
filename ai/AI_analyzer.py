@@ -5,8 +5,9 @@ Connects scanner findings to the AI provider chain.
 
 HOW IT WORKS:
   1. analyze_scan() is called by engine.py after all checks complete
-  2. It sends ALL priority findings (HIGH/CRITICAL/MEDIUM) to the AI in ONE batched call
-     → This drastically reduces API calls: 10 findings = 1 call, not 10 calls
+  2. It sends priority findings (HIGH/CRITICAL/MEDIUM) to the AI in small
+     chunked batch calls (AI_BATCH_SIZE per call) — one giant call gets
+     truncated and enriches nothing
   3. Then it generates one executive summary call
   4. LOW/INFO findings are NOT sent to AI — they have consistent, well-understood fixes
 
@@ -37,7 +38,7 @@ import json
 import re
 from typing import Optional, Callable
 
-from config import ENABLE_AI_ANALYSIS
+from config import ENABLE_AI_ANALYSIS, AI_BATCH_SIZE
 from scanner.models import Finding, ScanResult
 from ai.prompts import (
     BATCH_ANALYSIS_SYSTEM,
@@ -47,6 +48,17 @@ from ai.prompts import (
 )
 from ai.providers.openai_provider import OpenAIProvider
 from ai.providers.base import ProviderError
+
+
+# Max findings per AI analysis call. One giant call (100+ findings) returns a
+# truncated, unparseable response — and then NOTHING gets AI enrichment.
+# Small chunks always parse; a failed chunk only costs its own findings.
+# (AI_BATCH_SIZE comes from config/.env; 1 = one call per finding.)
+
+# Prompt-size guard: finding text is truncated per field so one huge page
+# (JS bundle in evidence) can't blow up every chunk it touches.
+_PROMPT_DETAIL_CHARS = 800
+_PROMPT_EVIDENCE_CHARS = 500
 
 
 # Last AI failure message (reset at the start of every analyze_scan call).
@@ -196,9 +208,10 @@ def analyze_scan(
 
         Returns empty dict if AI is disabled or all providers fail.
 
-    API CALL COUNT:
-      - Old: 1 call per finding → prone to rate limits
-      - New: 2 calls total (batch + summary) → fast, safe on any tier
+    API CALL COUNT (AI_BATCH_SIZE from .env, default 25):
+      - Batched: ceil(priority / AI_BATCH_SIZE) calls + 1 summary call
+      - Per-finding: AI_BATCH_SIZE=1 → one call per finding (thorough,
+        slow, rate-limit prone — the model fallback chain absorbs 429s)
       - If you have 0 priority findings → 1 call (summary only)
     """
     def log(msg: str):
@@ -234,49 +247,61 @@ def analyze_scan(
     for f in lower_findings:
         f.ai_verified = None
 
-    # ── Step 1: Batched finding analysis ──────────────────────────────────
-    # Send ALL priority findings in ONE API call.
-    # The AI returns a JSON array with one analysis object per finding.
+    # ── Step 1: Chunked finding analysis ──────────────────────────────────
+    # Priority findings go out in small batches (AI_BATCH_SIZE per call).
+    # One giant call gets truncated mid-JSON and then NOTHING is enriched —
+    # chunks always parse, and a failed chunk only costs its own findings.
     if priority_findings:
-        log(f"\n[AI] Batch-analyzing {len(priority_findings)} findings in 1 API call ({provider.name})...")
+        chunks = [priority_findings[i:i + AI_BATCH_SIZE]
+                  for i in range(0, len(priority_findings), AI_BATCH_SIZE)]
+        log(f"\n[AI] Analyzing {len(priority_findings)} findings in {len(chunks)} batch call(s) ({provider.name})...")
+        enriched, failed = 0, 0
 
-        # Build a numbered list of findings for the prompt
-        findings_text = "\n\n".join(
-            f"Finding #{i+1}:\n"
-            f"  Type:     {f.vuln_type}\n"
-            f"  Severity: {f.severity}\n"
-            f"  URL:      {f.url}\n"
-            f"  Detail:   {f.detail}\n"
-            f"  Evidence: {f.evidence}"
-            for i, f in enumerate(priority_findings)
-        )
+        for n, chunk in enumerate(chunks, 1):
+            # Number findings 1..N within the chunk (matches the prompt contract)
+            findings_text = "\n\n".join(
+                f"Finding #{i+1}:\n"
+                f"  Type:     {f.vuln_type}\n"
+                f"  Severity: {f.severity}\n"
+                f"  URL:      {f.url}\n"
+                f"  Detail:   {(f.detail or '')[:_PROMPT_DETAIL_CHARS]}\n"
+                f"  Evidence: {(f.evidence or '')[:_PROMPT_EVIDENCE_CHARS]}"
+                for i, f in enumerate(chunk)
+            )
 
-        prompt = BATCH_ANALYSIS_PROMPT.format(
-            count          = len(priority_findings),
-            findings_text  = findings_text,
-        )
+            prompt = BATCH_ANALYSIS_PROMPT.format(
+                count         = len(chunk),
+                findings_text = findings_text,
+            )
 
-        try:
-            response      = provider.complete(BATCH_ANALYSIS_SYSTEM, prompt)
-            batch_data    = _parse_ai_response(response.content)
+            try:
+                response   = provider.complete(BATCH_ANALYSIS_SYSTEM, prompt)
+                batch_data = _parse_ai_response(response.content)
 
-            # AI returns: {"analyses": [{...finding 1...}, {...finding 2...}, ...]}
-            analyses = batch_data.get("analyses", [])
+                # AI returns: {"analyses": [{...finding 1...}, ...]}
+                analyses = batch_data.get("analyses", [])
 
-            if not analyses:
-                log("[!] AI returned empty analyses array — findings will not have AI enrichment")
-            else:
-                log(f"[AI] Received {len(analyses)} analysis results (model: {response.model_used})")
-                for i, (finding, ai_data) in enumerate(zip(priority_findings, analyses)):
+                if not analyses:
+                    raise ProviderError(
+                        f"batch {n}/{len(chunks)} returned no usable analyses "
+                        f"(model: {response.model_used})"
+                    )
+                log(f"[AI] Batch {n}/{len(chunks)}: {len(analyses)} results (model: {response.model_used})")
+                for finding, ai_data in zip(chunk, analyses):
                     _apply_ai_data_to_finding(finding, ai_data)
-                    log(f"[AI]   [ok] {finding.vuln_type} (CVSS: {finding.cvss_score}, verified: {finding.ai_verified})")
+                    enriched += 1
 
-        except ProviderError as e:
-            log(f"[!] AI provider error during batch analysis: {e}")
-            log("    → Findings below are NOT AI-verified. Check AI_MODEL / key / endpoint in .env.")
-            _record_ai_error(f"Batch analysis failed: {e}")
-            for f in priority_findings:
-                f.ai_verified = False
+            except ProviderError as e:
+                log(f"[!] AI provider error during batch analysis: {e}")
+                _record_ai_error(f"Batch analysis failed: {e}")
+                for f in chunk:
+                    f.ai_verified = False
+                failed += len(chunk)
+
+        if enriched:
+            log(f"[AI] Enriched {enriched} finding(s){f', {failed} unverified' if failed else ''}")
+        else:
+            log("[!] No findings got AI enrichment — check AI_MODEL / key / endpoint in .env.")
     else:
         log("[AI] No HIGH/CRITICAL/MEDIUM findings — skipping per-finding analysis")
 

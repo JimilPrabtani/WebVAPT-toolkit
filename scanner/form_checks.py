@@ -142,7 +142,7 @@ def check_form_injection(url: str, response: requests.Response) -> List[Finding]
                 findings.append(Finding(
                     vuln_type="Cross-Site Scripting (Reflected via Form)",
                     severity="HIGH",
-                    url=url,
+                    url=action,
                     detail=(
                         f"Form field '{field_name}' (action '{action}', method {method}) "
                         "reflects submitted input unescaped into the response. An attacker "
@@ -165,7 +165,7 @@ def check_form_injection(url: str, response: requests.Response) -> List[Finding]
                     findings.append(Finding(
                         vuln_type="SQL Injection (Error-Based via Form)",
                         severity="CRITICAL",
-                        url=url,
+                        url=action,
                         detail=(
                             f"Form field '{field_name}' (action '{action}', method {method}) "
                             "triggers a raw database error when a SQL metacharacter is submitted. "
@@ -209,7 +209,7 @@ def check_form_csrf(url: str, response: requests.Response) -> List[Finding]:
         findings.append(Finding(
             vuln_type="Missing CSRF Token on Form",
             severity="MEDIUM",
-            url=url,
+            url=action,
             detail=(
                 f"POST form targeting '{action}' has no anti-CSRF token field. "
                 "An attacker site can submit this form on behalf of a logged-in victim "

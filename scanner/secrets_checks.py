@@ -90,6 +90,8 @@ def check_secrets_in_response(url: str, response: requests.Response) -> list[Fin
                     "2. Remove secrets from source code, HTML, and JS bundles. "
                     "3. Use environment variables or a secrets manager (Vault, AWS Secrets Manager). "
                     "4. Audit git history with Gitleaks/TruffleHog to check for prior exposure."
+                    + (" 5. Google Maps/YouTube browser keys: lock them down with HTTP-referrer "
+                       "restrictions in Google Cloud Console instead of deleting embeds." if label == "Google API Key" else "")
                 ),
             ))
 

@@ -7,7 +7,7 @@ Automated web security scanner: crawl a target → run 40+ checks across 12 cate
 ## Features
 
 - **40 checks across 12 categories** (OWASP Top 10 + LLM Top 10): headers, XSS, SQLi (error/boolean/time-based), path traversal, active form testing + CSRF, LLM endpoint/model/key exposure, Nuclei-style JSON templates, OSV supply-chain lookup, sensitive paths, SSTI, secrets, TLS, open redirect, JWT.
-- **AI enrichment with free-model failover**: one batched call grades CRITICAL/HIGH/MEDIUM (CVSS, attack scenario, fix, systemic prevention); `AI_MODEL` is a fallback chain, dead models are skipped automatically.
+- **AI enrichment with free-model failover**: chunked calls grade CRITICAL/HIGH/MEDIUM (CVSS, attack scenario, fix, systemic prevention); `AI_MODEL` is a fallback chain, dead models are skipped automatically.
 - **Evidenced attack chains**: findings linked into recon → exploit → impact paths for pentest reports.
 - **Three ways to run**: terminal UI, REST API, one-off CLI. `--no-ai` scans still get heuristic risk scores + static prevention guidance.
 - **ASCII severity** (`[!!] [!] [*] [.] [i]`), SSRF guard, SQLite + JSON/TXT reports.
@@ -82,8 +82,9 @@ SCAN ── workers run all check modules per page (site-wide ones run once):
 DEDUP ── MD5 fingerprint per finding, drops duplicates
   │
   ▼
-AI ── CRITICAL/HIGH/MEDIUM in ONE batched call (CVSS + attack scenario + fix +
+AI ── CRITICAL/HIGH/MEDIUM in chunked batch calls (CVSS + attack scenario + fix +
 │     systemic prevention), plus one executive-summary call (risk score 0–100).
+│     Granularity is yours: AI_BATCH_SIZE=25 (default) or 1 for one call per finding.
 │     Skipped with --no-ai (deterministic heuristic score + static prevention instead).
 │     AI_MODEL is a comma-separated fallback chain of OpenRouter free models —
 │     dead/rate-limited models are skipped automatically.

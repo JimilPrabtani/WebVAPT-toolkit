@@ -424,7 +424,7 @@ def check_forms_for_sqli(url: str, response: requests.Response) -> List[Finding]
         findings.append(Finding(
             vuln_type   = "SQLi Attack Surface: Form with User Input",
             severity    = "INFO",
-            url         = url,
+            url         = action,
             detail      = (
                 f"Form at '{action}' (method: {method}) contains "
                 f"{len(inputs)} input field(s). These are potential SQL injection entry points. "

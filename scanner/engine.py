@@ -56,6 +56,7 @@ SITE_WIDE_VULN_PREFIXES = (
     "Information Disclosure:",  # Server version leaks are consistent site-wide
     "Vulnerable Component:",    # A lib version is the same wherever it's referenced
     "Exposed Model",            # A model name leak is identical on every page
+    "Secret Exposure:",         # Same leaked secret on N pages is one leak (evidence hash keeps distinct secrets apart)
 )
 
 

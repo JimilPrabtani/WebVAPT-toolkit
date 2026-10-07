@@ -31,6 +31,9 @@ MAX_PAGES_TO_CRAWL: int = _int_env("MAX_PAGES_TO_CRAWL", 20)
 # Safety net for "scan all pages" mode (max_pages=0): BFS never exceeds this.
 CRAWL_HARD_CAP: int = _int_env("CRAWL_HARD_CAP", 200)
 SCAN_WORKERS: int = _int_env("SCAN_WORKERS", 4)
+# Findings per AI analysis call. 25 = chunked batches (fast, cheap).
+# 1 = one call per finding (most thorough, slow, rate-limit prone on free tiers).
+AI_BATCH_SIZE: int = max(1, _int_env("AI_BATCH_SIZE", 25))
 
 DEFAULT_HEADERS: dict = {
     "User-Agent": (

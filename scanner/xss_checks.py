@@ -193,7 +193,7 @@ def check_forms_for_xss(url: str, response: requests.Response) -> List[Finding]:
             findings.append(Finding(
                 vuln_type  = "XSS Attack Surface: Unvalidated Form Input",
                 severity   = "INFO",
-                url        = url,
+                url        = full_action,
                 detail     = (
                     f"Form targeting '{full_action}' contains "
                     f"{len(text_inputs)} text input(s) and {len(textareas)} textarea(s). "

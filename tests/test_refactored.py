@@ -767,5 +767,170 @@ class TestOsvChecks:
             assert check_js_libraries("https://x/", r) == []
 
 
+class TestAiChunking:
+    """Big priority lists are split into parseable chunks, not one giant call."""
+
+    def _result_with_n_high(self, n):
+        result = ScanResult(target_url="https://example.com")
+        for i in range(n):
+            result.add(Finding(
+                vuln_type=f"Test Vuln {i}", severity="HIGH",
+                url=f"https://example.com/p{i}", detail="d" * 2000,
+                evidence="e" * 2000, remediation="r",
+            ))
+        return result
+
+    def _batch_response(self, count):
+        from ai.providers.base import AIResponse
+        analyses = [{
+            "verified": True, "confidence": "HIGH", "severity": "HIGH",
+            "cvss_score": 7.0, "owasp_id": "A05:2021", "cwe_id": "CWE-693",
+            "remediation_steps": ["fix it"], "cve_ids": [],
+        } for _ in range(count)]
+        import json as _json
+        return AIResponse(content=_json.dumps({"analyses": analyses}),
+                          model_used="test", provider="test")
+
+    def test_thirty_findings_use_two_chunks_plus_summary(self):
+        from ai.AI_analyzer import analyze_scan, AI_BATCH_SIZE
+        assert AI_BATCH_SIZE == 25
+        from ai.providers.base import AIResponse
+        with patch('ai.AI_analyzer.OpenAIProvider') as mock_openai:
+            mock_provider = MagicMock(spec=AIProvider)
+            mock_provider.complete.side_effect = [
+                self._batch_response(25), self._batch_response(5),
+                AIResponse(content='{"overall_risk": "HIGH", "risk_score": 50}',
+                           model_used="test", provider="test"),
+            ]
+            mock_openai.return_value = mock_provider
+            with patch('ai.AI_analyzer.ENABLE_AI_ANALYSIS', True):
+                result = self._result_with_n_high(30)
+                summary = analyze_scan(result)
+            assert mock_provider.complete.call_count == 3
+            assert all(f.ai_verified is True for f in result.findings)
+            assert summary["risk_score"] == 50
+
+    def test_failed_chunk_marks_only_its_findings(self):
+        from ai.AI_analyzer import analyze_scan, get_last_ai_error
+        from ai.providers.base import AIResponse, ProviderError
+        with patch('ai.AI_analyzer.OpenAIProvider') as mock_openai:
+            mock_provider = MagicMock(spec=AIProvider)
+            mock_provider.complete.side_effect = [
+                ProviderError("Error code: 429 - slow down"),
+                self._batch_response(5),
+                AIResponse(content='{"overall_risk": "HIGH", "risk_score": 50}',
+                           model_used="test", provider="test"),
+            ]
+            mock_openai.return_value = mock_provider
+            with patch('ai.AI_analyzer.ENABLE_AI_ANALYSIS', True):
+                result = self._result_with_n_high(30)
+                analyze_scan(result)
+            assert sum(1 for f in result.findings if f.ai_verified is False) == 25
+            assert sum(1 for f in result.findings if f.ai_verified is True) == 5
+            assert "429" in get_last_ai_error()
+
+    def test_batch_size_knob_controls_call_count(self):
+        from ai.AI_analyzer import analyze_scan
+        from ai.providers.base import AIResponse
+        with patch('ai.AI_analyzer.OpenAIProvider') as mock_openai, \
+             patch('ai.AI_analyzer.AI_BATCH_SIZE', 1):
+            mock_provider = MagicMock(spec=AIProvider)
+            mock_provider.complete.side_effect = [
+                self._batch_response(1), self._batch_response(1),
+                AIResponse(content='{"overall_risk": "HIGH", "risk_score": 50}',
+                           model_used="test", provider="test"),
+            ]
+            mock_openai.return_value = mock_provider
+            with patch('ai.AI_analyzer.ENABLE_AI_ANALYSIS', True):
+                result = self._result_with_n_high(2)
+                analyze_scan(result)
+            # AI_BATCH_SIZE=1 → one call per finding + summary
+            assert mock_provider.complete.call_count == 3
+            assert all(f.ai_verified is True for f in result.findings)
+
+    def test_empty_analyses_records_error(self):
+        from ai.AI_analyzer import analyze_scan, get_last_ai_error
+        from ai.providers.base import AIResponse
+        with patch('ai.AI_analyzer.OpenAIProvider') as mock_openai:
+            mock_provider = MagicMock(spec=AIProvider)
+            mock_provider.complete.side_effect = [
+                AIResponse(content='{"truncated...', model_used="test", provider="test"),
+                AIResponse(content='{"overall_risk": "LOW", "risk_score": 0}',
+                           model_used="test", provider="test"),
+            ]
+            mock_openai.return_value = mock_provider
+            with patch('ai.AI_analyzer.ENABLE_AI_ANALYSIS', True):
+                result = self._result_with_n_high(1)
+                analyze_scan(result)
+            assert result.findings[0].ai_verified is False
+            assert "no usable analyses" in get_last_ai_error()
+
+
+class TestFalsePositiveFixes:
+    """Same form/secret on N pages collapses instead of flooding results."""
+
+    def _page(self, html):
+        r = Mock(spec=requests.Response)
+        r.text = html
+        r.headers = {"Content-Type": "text/html"}
+        return r
+
+    def test_secrets_are_site_wide(self):
+        from scanner.engine import _is_site_wide
+        assert _is_site_wide("Secret Exposure: Google API Key") is True
+
+    def test_llm_module_no_longer_flags_aiza(self):
+        from scanner.llm_checks import LLM_KEY_PATTERNS
+        assert not any("AIza" in pattern for pattern, _ in LLM_KEY_PATTERNS)
+
+    def test_form_surface_url_is_the_action(self):
+        from scanner.xss_checks import check_forms_for_xss
+        from scanner.sqli_checks import check_forms_for_sqli
+        html = ('<html><form action="/search" method="GET">'
+                '<input type="text" name="q"></form></html>')
+        page = "https://example.com/some-page/"
+        for fn in (check_forms_for_xss, lambda u, r: check_forms_for_sqli(u, r)):
+            findings = fn(page, self._page(html))
+            assert len(findings) == 1
+            assert findings[0].url == "https://example.com/search"
+
+    def test_form_csrf_url_is_the_action(self):
+        from scanner.form_checks import check_form_csrf
+        html = ('<html><form action="/profile" method="POST">'
+                '<input type="text" name="email"></form></html>')
+        findings = check_form_csrf("https://example.com/any-page/", self._page(html))
+        assert len(findings) == 1
+        assert findings[0].url == "https://example.com/profile"
+
+    def test_same_form_on_many_pages_collapses_in_engine(self):
+        from scanner.engine import run_scan
+        from scanner.models import Finding
+        # One shared newsletter form + one shared Maps key, seen on 3 pages
+        def page_findings(url):
+            return [
+                Finding(vuln_type="XSS Attack Surface: Unvalidated Form Input",
+                        severity="INFO", url="https://example.com/subscribe",
+                        detail="d", evidence="Form action='https://example.com/subscribe', method='GET'",
+                        remediation="r"),
+                Finding(vuln_type="Secret Exposure: Google API Key",
+                        severity="HIGH", url="nirma-test-site",
+                        detail="d", evidence="Pattern matched: Google API Key — redacted sample: AIzaSy...g94w",
+                        remediation="r"),
+            ]
+        pages = [(f"https://example.com/p{i}", Mock(spec=requests.Response)) for i in range(3)]
+        with patch('scanner.engine.crawl', return_value=pages), \
+             patch('scanner.engine._scan_page', side_effect=lambda u, r, t, tls: page_findings(u)), \
+             patch('scanner.engine._cache_clear'), \
+             patch('scanner.engine.ENABLE_AI_ANALYSIS', False):
+            result, _ = run_scan("https://example.com", max_workers=1)
+            by_type = {}
+            for f in result.findings:
+                by_type[f.vuln_type] = by_type.get(f.vuln_type, 0) + 1
+            assert by_type == {
+                "XSS Attack Surface: Unvalidated Form Input": 1,
+                "Secret Exposure: Google API Key": 1,
+            }
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

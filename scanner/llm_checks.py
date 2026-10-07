@@ -15,7 +15,7 @@ WHAT IS CHECKED (per page + once per scan from the domain root):
   3. Prompt-injection surface — text inputs/forms posting to chat-like
      endpoints (LLM01: Prompt Injection — flagged INFO with a manual-test guide)
   4. Sensitive data in AI context — API keys for LLM providers
-     (sk-ant-*, sk-proj-*, xai-*, AIza…) in responses (LLM02/LLM06)
+     (sk-ant-*, sk-proj-*, xai-*) in responses (LLM02/LLM06)
 
 All findings set owasp_id explicitly (LLMxx:2025) so reports group them under
 the LLM Top 10 even with AI analysis disabled.
@@ -67,11 +67,12 @@ MODEL_PATTERNS = [
 ]
 
 # ── 4. LLM provider API-key patterns ──────────────────────────────────────
+# NOTE: bare Google AIza keys are owned by secrets_checks ("Google API Key").
+# Listing AIza here too reported every Maps embed twice, so it stays out.
 LLM_KEY_PATTERNS = [
     (r"sk-ant-[A-Za-z0-9\-_]{10,}", "Anthropic API key"),
     (r"sk-proj-[A-Za-z0-9\-_]{10,}", "OpenAI project API key"),
     (r"xai-[A-Za-z0-9]{10,}", "xAI API key"),
-    (r"AIza[0-9A-Za-z\-_]{20,}", "Google AI API key"),
 ]
 
 
