@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "WebVAPT Toolkit — Scan Pipeline",
+    "subtitle": "Crawl → Scan → Dedup → AI → Chains → Save → Read",
+    "quality_profile": "showcase",
+    "visual_preset": "signal-flow",
+    "output": "assets/webvapt-architecture-diagram.html"
+  },
+  "layout": {
+    "mode": "grid",
+    "cols": 7,
+    "gapX": 75,
+    "gapY": 65,
+    "cellW": 150,
+    "cellH": 70
+  },
+  "components": [
+    { "id": "client", "type": "frontend", "label": "Client", "sublabel": "POST /scan", "row": 0, "col": 3, "tag": "Web + CLI + TUI" },
+    { "id": "crawl", "type": "backend", "label": "CRAWL", "sublabel": "BFS domain walk · cached", "row": 1, "col": 1 },
+    { "id": "scan", "type": "backend", "label": "SCAN", "sublabel": "40 checks · 12 cats", "row": 1, "col": 3 },
+    { "id": "dedup", "type": "security", "label": "DEDUP", "sublabel": "MD5 fingerprint", "row": 2, "col": 3 },
+    { "id": "ai", "type": "cloud", "label": "AI", "sublabel": "CVSS · fix · summary", "row": 3, "col": 2 },
+    { "id": "chains", "type": "security", "label": "CHAINS", "sublabel": "Attack paths", "row": 3, "col": 4 },
+    { "id": "save", "type": "database", "label": "SAVE", "sublabel": "SQLite + JSON / TXT", "row": 4, "col": 3 },
+    { "id": "read", "type": "frontend", "label": "READ", "sublabel": "TUI · API · CLI output", "row": 5, "col": 3 }
+  ],
+  "boundaries": [
+    { "kind": "security-group", "label": "Scan Engine", "wraps": ["crawl", "scan", "dedup", "ai", "chains"], "pad": 30 },
+    { "kind": "region", "label": "Storage & Output", "wraps": ["save", "read"], "pad": 20 }
+  ],
+  "connections": [
+    { "id": "c1", "from": "client", "to": "crawl", "label": "target_url · enable_ai · max_pages", "variant": "emphasis", "labelDy": -30 },
+    { "id": "c2", "from": "crawl", "to": "scan", "label": "cached page responses", "labelAt": [420, 195], "labelDy": -18 },
+    { "id": "c3", "from": "scan", "to": "dedup", "label": "findings", "labelAt": [765, 289], "labelDy": 14 },
+    { "id": "c4", "from": "dedup", "to": "ai", "label": "CRITICAL/HIGH/MEDIUM", "labelAt": [535, 390], "labelSegment": 0, "labelDy": -15, "route": "orthogonal-v" },
+    { "id": "c5", "from": "ai", "to": "chains", "label": "scored findings", "labelAt": [660, 370], "labelSegment": 0, "labelDy": -20 },
+    { "id": "c6", "from": "chains", "to": "save", "label": "linked attack paths", "labelAt": [765, 540], "labelDy": 14 },
+    { "id": "c7", "from": "save", "to": "read", "label": "reports", "variant": "security", "labelAt": [780, 694], "labelDy": -28 }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Scan Modules", "items": ["headers · XSS · SQLi (error / boolean / time) · traversal · forms + CSRF · LLM endpoint exposure", "Nuclei-style JSON templates · OSV JS supply chain · sensitive paths · SSTI · secrets · TLS / open redirect · JWT"] },
+    { "dot": "emerald", "title": "AI Enrichment", "items": ["Chunked batch calls with free-model failover", "CVSS + attack scenario + fix + systemic prevention", "Executive risk score 0–100"] },
+    { "dot": "rose", "title": "Security & Guard", "items": ["SSRF guard blocks private targets (ALLOW_PRIVATE_TARGETS=true)", "ASCII severity: [!!] CRITICAL · [!] HIGH · [*] MEDIUM · [.] LOW · [i] INFO"] }
+  ]
+}

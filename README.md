@@ -4,6 +4,55 @@ Automated web security scanner: crawl a target → run 40+ checks across 12 cate
 
 > Authorized testing only. Scan targets you own or have written permission to test.
 
+## Architecture diagram
+![WAF Ops Platform architecture](assets/webvapt-toolkit-scan-pipeline.svg)
+
+Interactive architecture diagram.
+
+- [assets/webvapt-architecture-diagram.html](assets/webvapt-architecture-diagram.html) — interactive SVG (open in browser; supports theme switch, pan/zoom, search, focus, relationship tracing)
+- Source spec: [assets/webvapt-architecture-v2.json](assets/webvapt-architecture-v2.json)
+
+The diagram shows the full pipeline: Client → CRAWL → SCAN → DEDUP → AI → CHAINS → SAVE → READ, with the Scan Engine and Storage & Output boundaries.
+
+## How the tool works
+
+```
+Target URL
+  │  POST /scan {target_url, enable_ai, max_pages}
+  ▼
+CRAWL ── BFS walk of the target domain (up to MAX_PAGES_TO_CRAWL), responses cached
+  │
+  ▼
+SCAN ── workers run all check modules per page (site-wide ones run once):
+│  headers · xss · sqli (error/boolean/time) · traversal · forms+csrf ·
+│  llm (OWASP LLM Top 10) · templates (Nuclei-style JSON) · osv (JS supply chain) ·
+│  sensitive-paths · ssti · secrets · tls/open-redirect
+  │
+  ▼
+DEDUP ── MD5 fingerprint per finding, drops duplicates
+  │
+  ▼
+AI ── CRITICAL/HIGH/MEDIUM in chunked batch calls (CVSS + attack scenario + fix +
+│     systemic prevention), plus one executive-summary call (risk score 0–100).
+│     Granularity is yours: AI_BATCH_SIZE=25 (default) or 1 for one call per finding.
+│     Skipped with --no-ai (deterministic heuristic score + static prevention instead).
+│     AI_MODEL is a comma-separated fallback chain of OpenRouter free models —
+│     dead/rate-limited models are skipped automatically.
+│     Re-benchmark with `python scripts/benchmark_free_models.py`.
+   │
+   ▼
+CHAINS ── findings linked into evidenced exploitation paths
+│     (recon → exploit → impact, e.g. XSS + missing HttpOnly → session hijack)
+   │
+  ▼
+SAVE ── SQLite (data/scans.db) + JSON/TXT (data/reports/)
+  │
+  ▼
+READ ── TUI pages (live status poll → results), API, or CLI output
+```
+
+Severity is ASCII text (`[!!] [!] [*] [.] [i]`), never color. SSRF guard blocks private/internal targets unless `ALLOW_PRIVATE_TARGETS=true`.
+
 ## Features
 
 - **40 checks across 12 categories** (OWASP Top 10 + LLM Top 10): headers, XSS, SQLi (error/boolean/time-based), path traversal, active form testing + CSRF, LLM endpoint/model/key exposure, Nuclei-style JSON templates, OSV supply-chain lookup, sensitive paths, SSTI, secrets, TLS, open redirect, JWT.
@@ -63,45 +112,6 @@ python scan.py http://localhost:3000 --all   # crawl up to CRAWL_HARD_CAP (200) 
     ├── pages/         # home, scan, scan/[id], results, history, help
     └── tests/         # node:test suite
 ```
-
-## How the tool works
-
-```
-Target URL
-  │  POST /scan {target_url, enable_ai, max_pages}
-  ▼
-CRAWL ── BFS walk of the target domain (up to MAX_PAGES_TO_CRAWL), responses cached
-  │
-  ▼
-SCAN ── workers run all check modules per page (site-wide ones run once):
-│  headers · xss · sqli (error/boolean/time) · traversal · forms+csrf ·
-│  llm (OWASP LLM Top 10) · templates (Nuclei-style JSON) · osv (JS supply chain) ·
-│  sensitive-paths · ssti · secrets · tls/open-redirect
-  │
-  ▼
-DEDUP ── MD5 fingerprint per finding, drops duplicates
-  │
-  ▼
-AI ── CRITICAL/HIGH/MEDIUM in chunked batch calls (CVSS + attack scenario + fix +
-│     systemic prevention), plus one executive-summary call (risk score 0–100).
-│     Granularity is yours: AI_BATCH_SIZE=25 (default) or 1 for one call per finding.
-│     Skipped with --no-ai (deterministic heuristic score + static prevention instead).
-│     AI_MODEL is a comma-separated fallback chain of OpenRouter free models —
-│     dead/rate-limited models are skipped automatically.
-│     Re-benchmark with `python scripts/benchmark_free_models.py`.
-   │
-   ▼
-CHAINS ── findings linked into evidenced exploitation paths
-│     (recon → exploit → impact, e.g. XSS + missing HttpOnly → session hijack)
-   │
-  ▼
-SAVE ── SQLite (data/scans.db) + JSON/TXT (data/reports/)
-  │
-  ▼
-READ ── TUI pages (live status poll → results), API, or CLI output
-```
-
-Severity is ASCII text (`[!!] [!] [*] [.] [i]`), never color. SSRF guard blocks private/internal targets unless `ALLOW_PRIVATE_TARGETS=true`.
 
 ## Reference-tool parity
 
